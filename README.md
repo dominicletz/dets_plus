@@ -26,6 +26,7 @@ Maximum entry count: :infinity
 
 - `:dets` is limited to 2gb of data `DetsPlus` has no such limit.
 - `DetsPlus` is SLOWER in reading than `:dets` because it goes to disk for that. 
+- Only type = `:set` is supported
 
 The `:dets` limitation of 2gb caused me to create this library. I needed to store and lookup key-value pairs from sets larger than what fits into memory. Thus the current implementation did not try to be equivalent to `:dets` nor to be complete. Instead it's focused on storing large amounts of values and have fast lookups. PRs to make it more complete and use it for other things are welcome. 
 
@@ -44,6 +45,7 @@ DetsPlus.insert(dets, {1, 1, 1})
 - Add `update_counter/3`
 - Add `traverse/2`, `foldr/3`, `first/1` ,`next/1` based on the `iterate()` function
 - Add `match()/select()` - no idea how to do that efficiently though?
+- Add support for `bag` and `sorted_set` 
 
 - Maybe allow customizing the hash function?
 - Maybe allow customizing bloom filter size / usage?
