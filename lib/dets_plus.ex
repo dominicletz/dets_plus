@@ -634,19 +634,27 @@ defmodule DetsPlus do
   end
 
   defp bloom_create(state = %DetsPlus{}, bloom_size) do
-    {:ok, bloom} = :file.open(:binary.copy(<<0>>, bloom_size), [:ram, :read, :write, :binary])
-    %DetsPlus{state | bloom_size: bloom_size, bloom: bloom}
+    {:ok, ram_file} = :file.open(:binary.copy(<<0>>, bloom_size), [:ram, :read, :write, :binary])
+    %DetsPlus{state | bloom_size: bloom_size, bloom: {ram_file, [], 0}}
   end
 
-  defp bloom_add(state = %DetsPlus{bloom_size: bloom_size, bloom: bloom}, hash) do
-    :ok = :file.pwrite(bloom, rem(hash, bloom_size), <<1>>)
-    state
-    # %DetsPlus{state | bloom: Map.put(bloom, rem(hash, bloom_size), true)}
+  defp bloom_add(state = %DetsPlus{bloom_size: bloom_size, bloom: {ram_file, keys, n}}, hash) do
+    key = rem(hash, bloom_size)
+    keys = [key | keys]
+    n = n + 1
+
+    if n < 128 do
+      %DetsPlus{state | bloom: {ram_file, keys, n}}
+    else
+      :ok = :file.pwrite(ram_file, Enum.zip(keys, List.duplicate(<<1>>, n)))
+      %DetsPlus{state | bloom: {ram_file, [], 0}}
+    end
   end
 
-  defp bloom_finalize(state = %DetsPlus{bloom: bloom, bloom_size: bloom_size}) do
-    {:ok, binary} = :file.pread(bloom, 0, bloom_size)
-    :file.close(bloom)
+  defp bloom_finalize(state = %DetsPlus{bloom: {ram_file, keys, n}, bloom_size: bloom_size}) do
+    :ok = :file.pwrite(ram_file, Enum.zip(keys, List.duplicate(<<1>>, n)))
+    {:ok, binary} = :file.pread(ram_file, 0, bloom_size)
+    :file.close(ram_file)
     %DetsPlus{state | bloom: binary}
   end
 
