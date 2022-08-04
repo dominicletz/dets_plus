@@ -31,7 +31,6 @@ The `:dets` limitation of 2gb caused me to create this library. I needed to stor
 
 ## Ideas for PRs and future improvements
 
-- Add `dets:member/2`
 - Add `delete*` functions and add tombstone markers to the ets table
 - Add `update_counter/3`
 - Add `traverse/2`, `foldr/3`, `first/1` ,`next/1` based on the `iterate()` function
