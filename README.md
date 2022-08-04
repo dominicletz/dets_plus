@@ -29,6 +29,15 @@ Maximum entry count: :infinity
 
 The `:dets` limitation of 2gb caused me to create this library. I needed to store and lookup key-value pairs from sets larger than what fits into memory. Thus the current implementation did not try to be equivalent to `:dets` nor to be complete. Instead it's focused on storing large amounts of values and have fast lookups. PRs to make it more complete and use it for other things are welcome. 
 
+## Basic usage
+
+```
+{:ok, dets} = DetsPlus.open_file(:example)
+DetsPlus.insert(dets, {1, 1, 1})
+[{1, 1, 1}] = DetsPlus.lookup(dets, 1)
+:ok =  DetsPlus.close(dets)
+```
+
 ## Ideas for PRs and future improvements
 
 - Add `delete*` functions and add tombstone markers to the ets table

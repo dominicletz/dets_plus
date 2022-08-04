@@ -95,5 +95,36 @@ defmodule DetsPlus.Test do
       assert DetsPlus.insert(dets, {1, 1, 1}) == :ok
       assert DetsPlus.member?(dets, 1) == true
     end
+
+    test "keypos != 1" do
+      File.rm("test_file4")
+      {:ok, dets} = DetsPlus.open_file(:test_file4, keypos: 2)
+
+      assert DetsPlus.info(dets, :size) == 0
+      assert DetsPlus.lookup(dets, 1) == []
+      assert DetsPlus.insert(dets, {1, 1, 1}) == :ok
+      assert DetsPlus.info(dets, :size) == 1
+      assert DetsPlus.lookup(dets, 1) == [{1, 1, 1}]
+      assert DetsPlus.insert_new(dets, {1, 1, 1}) == false
+
+      # Save and reopen to test persistency
+      assert DetsPlus.close(dets) == :ok
+      {:ok, dets} = DetsPlus.open_file(:test_file4)
+      assert DetsPlus.info(dets, :size) == 1
+      assert DetsPlus.lookup(dets, 1) == [{1, 1, 1}]
+      assert DetsPlus.insert_new(dets, {1, 1, 1}) == false
+
+      # Overwrite a value
+      assert DetsPlus.insert(dets, {2, 1, 2}) == :ok
+      assert DetsPlus.lookup(dets, 1) == [{2, 1, 2}]
+      assert DetsPlus.sync(dets) == :ok
+      assert DetsPlus.lookup(dets, 1) == [{2, 1, 2}]
+
+      # Overwrite again
+      assert DetsPlus.insert(dets, {3, 1, 3}) == :ok
+      assert DetsPlus.lookup(dets, 1) == [{3, 1, 3}]
+      assert DetsPlus.sync(dets) == :ok
+      assert DetsPlus.lookup(dets, 1) == [{3, 1, 3}]
+    end
   end
 end
