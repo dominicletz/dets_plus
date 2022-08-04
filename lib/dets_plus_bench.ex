@@ -57,16 +57,19 @@ defmodule DetsPlus.Bench do
     # :observer.start()
     rounds = 3
     test_size = 100_000
+    modules = [:dets, DetsPlus]
 
-    for module <- [:dets, DetsPlus] do
+    for module <- modules do
       # for module <- [DetsPlus] do
-      # IO.puts("running rw test: #{module}")
+      IO.puts("running rw test: #{module}")
 
-      # for _ <- 1..rounds do
-      #   {time, :ok} = :timer.tc(&test/2, [module, test_size])
-      #   IO.inspect(time)
-      # end
+      for _ <- 1..rounds do
+        {time, :ok} = :timer.tc(&test/2, [module, test_size])
+        IO.puts("#{time}μs")
+      end
+    end
 
+    for module <- modules do
       IO.puts("running read test: #{module}")
       prepare_read_test(module, test_size)
 

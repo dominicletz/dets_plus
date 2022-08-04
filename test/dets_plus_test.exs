@@ -86,5 +86,14 @@ defmodule DetsPlus.Test do
       assert DetsPlus.sync(dets) == :ok
       assert DetsPlus.lookup(dets, 1) == [{1, 2, 3}]
     end
+
+    test "member" do
+      File.rm("test_file3")
+      {:ok, dets} = DetsPlus.open_file(:test_file3)
+
+      assert DetsPlus.member?(dets, 1) == false
+      assert DetsPlus.insert(dets, {1, 1, 1}) == :ok
+      assert DetsPlus.member?(dets, 1) == true
+    end
   end
 end

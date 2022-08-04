@@ -110,10 +110,10 @@ defmodule DetsPlus do
         }
       end
 
-    GenServer.start_link(__MODULE__, state,
-      hibernate_after: 5_000,
-      name: {:global, {__MODULE__, name}}
-    )
+    case GenServer.start_link(__MODULE__, state, hibernate_after: 5_000, name: name) do
+      {:ok, _pid} -> {:ok, name}
+      err -> err
+    end
   end
 
   defp load_state(filename) do
@@ -193,7 +193,7 @@ defmodule DetsPlus do
   @spec close(atom | pid) :: :ok
   def close(pid) do
     call(pid, :sync)
-    GenServer.stop(to_pid(pid))
+    GenServer.stop(pid)
   end
 
   @doc """
@@ -231,9 +231,29 @@ defmodule DetsPlus do
 
   Notice that the order of objects returned is unspecified. In particular, the order in which objects were inserted is not reflected.
   """
-  @spec lookup(atom | pid, any) :: [] | {:error, atom()}
+  @spec lookup(atom | pid, any) :: [tuple()] | {:error, atom()}
   def lookup(pid, key) do
     call(pid, {:lookup, key})
+  end
+
+  @doc """
+  Works like `lookup/2`, but does not return the objects. Returns true if one or more table elements has the key `key`, otherwise false.
+  """
+  @spec member?(atom | pid, any) :: false | true | {:error, atom}
+  def member?(pid, key) do
+    case lookup(pid, key) do
+      [] -> false
+      list when is_list(list) -> true
+      error -> error
+    end
+  end
+
+  @doc """
+  Same as `member?/2`
+  """
+  @spec member(atom | pid, any) :: false | true | {:error, atom}
+  def member(pid, key) do
+    member?(pid, key)
   end
 
   @doc """
@@ -281,14 +301,7 @@ defmodule DetsPlus do
   end
 
   defp call(pid, cmd, timeout \\ :infinity) do
-    GenServer.call(to_pid(pid), cmd, timeout)
-  end
-
-  defp to_pid(pid) do
-    case pid do
-      pid when is_pid(pid) -> pid
-      atom when is_atom(atom) -> :global.whereis_name({__MODULE__, atom})
-    end
+    GenServer.call(pid, cmd, timeout)
   end
 
   @impl true
