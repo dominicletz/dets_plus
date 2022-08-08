@@ -19,7 +19,7 @@ encoded header https://cr.yp.to/cdb.html
 Limits are:
 
 - Total file size: 18.446 Petabyte
-- Maximum entry size: 4.2 Gigabyte
+- Maximum per entry size: 4.2 Gigabyte
 - Maximum entry count: `:infinity`
 
 ## Notes
