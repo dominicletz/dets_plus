@@ -50,7 +50,6 @@ DetsPlus.insert(dets, {1, 1, 1})
 - Maybe allow customizing the hash function?
 - Maybe allow customizing bloom filter size / usage?
 - Maybe use bits for smaller bloom filter?
-- Maybe compress header for smaller file
 - Maybe adaptively choose @slot_size and @entry_size based on biggest entry and total number of entries for smaller file 
 
 ## Installation
