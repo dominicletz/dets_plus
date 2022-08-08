@@ -67,3 +67,37 @@ end
 
 The docs can be found at [https://hexdocs.pm/dets_plus](https://hexdocs.pm/dets_plus).
 
+## Performance
+
+As mentioned above reading `DetsPlus` is slower than `:dets` because `DetsPlus` is reading from disk primarily. Here 
+some measurements:
+
+```
+$ mix run bench/dets_plus.exs 
+running write test: dets
+4.609s
+4.333s
+4.338s
+running write test: Elixir.DetsPlus
+3.241s
+3.209s
+3.263s
+
+running rw test: dets
+3.326s
+3.263s
+3.412s
+running rw test: Elixir.DetsPlus
+3.582s
+3.483s
+3.468s
+
+running read test: dets
+0.987s
+0.962s
+1.04s
+running read test: Elixir.DetsPlus
+4.136s
+4.074s
+4.155s
+```
