@@ -53,30 +53,41 @@ defmodule DetsPlus.Bench do
     :ok = module.close(dets)
   end
 
+  def write_test(module, test_size) do
+    filename = 'test_file_dets_write_bench.#{module}'
+    File.rm(filename)
+    {:ok, dets} = module.open_file(:test_file_dets_bench, file: filename)
+
+    for x <- 0..test_size do
+      module.insert(dets, {x, x * x})
+    end
+
+    :ok = module.sync(dets)
+
+    for x <- 0..test_size do
+      module.insert(dets, {x + test_size, x * (x + test_size)})
+    end
+
+    :ok = module.close(dets)
+  end
+
+  def run(%{test_size: test_size, modules: modules, rounds: rounds}, label, fun) do
+    for module <- modules do
+      IO.puts("running #{label} test: #{module}")
+
+      for _ <- 1..rounds do
+        {time, :ok} = :timer.tc(fun, [module, test_size])
+        IO.puts("#{div(time, 1000)/1000}s")
+      end
+    end
+  end
+
   def run() do
     # :observer.start()
-    rounds = 3
-    test_size = 100_000
-    modules = [:dets, DetsPlus]
+    context = %{rounds: 3, test_size: 50_000, modules: [:dets, DetsPlus]}
 
-    for module <- modules do
-      # for module <- [DetsPlus] do
-      IO.puts("running rw test: #{module}")
-
-      for _ <- 1..rounds do
-        {time, :ok} = :timer.tc(&test/2, [module, test_size])
-        IO.puts("#{time}μs")
-      end
-    end
-
-    for module <- modules do
-      IO.puts("running read test: #{module}")
-      prepare_read_test(module, test_size)
-
-      for _ <- 1..rounds do
-        {time, :ok} = :timer.tc(&read_test/2, [module, test_size])
-        IO.puts("#{time}μs")
-      end
-    end
+    run(context, "write", &write_test/2)
+    run(context, "rw", &test/2)
+    run(context, "read", &read_test/2)
   end
 end
