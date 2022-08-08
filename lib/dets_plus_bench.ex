@@ -77,7 +77,7 @@ defmodule DetsPlus.Bench do
 
       for _ <- 1..rounds do
         {time, :ok} = :timer.tc(fun, [module, test_size])
-        IO.puts("#{div(time, 1000)/1000}s")
+        IO.puts("#{div(time, 1000) / 1000}s")
       end
     end
   end
