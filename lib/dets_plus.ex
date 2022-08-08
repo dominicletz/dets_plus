@@ -35,6 +35,7 @@ defmodule DetsPlus do
   @hash_size_bits @hash_size * 8
 
   use GenServer
+  require Logger
 
   @enforce_keys [:version]
   defstruct [
@@ -208,7 +209,10 @@ defmodule DetsPlus do
     Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
   def insert_new(pid, tuple) do
-    call(pid, {:insert_new, tuple})
+    case call(pid, {:insert_new, tuple}) do
+      :ok -> true
+      false -> false
+    end
   end
 
   @doc """
@@ -307,8 +311,13 @@ defmodule DetsPlus do
   @impl true
   def handle_call(
         {:insert, tuple},
-        _from,
-        state = %DetsPlus{ets: ets, sync: sync, sync_fallback: fallback}
+        from,
+        state = %DetsPlus{
+          ets: ets,
+          sync: sync,
+          sync_fallback: fallback,
+          sync_waiters: sync_waiters
+        }
       ) do
     if sync == nil do
       :ets.insert(ets, tuple)
@@ -320,7 +329,18 @@ defmodule DetsPlus do
           Map.put(fallback, do_key(state, tuple), tuple)
         end)
 
-      {:reply, :ok, %DetsPlus{state | sync_fallback: fallback}}
+      if map_size(fallback) > 1_000_000 do
+        # this pause exists to protect from out_of_memory situations when the writer can't
+        # finish in time
+        Logger.warn(
+          "DetsPlus flush slower than new inserts - pausing writes until flush is complete"
+        )
+
+        {:noreply,
+         %DetsPlus{state | sync_fallback: fallback, sync_waiters: [from | sync_waiters]}}
+      else
+        {:reply, :ok, %DetsPlus{state | sync_fallback: fallback}}
+      end
     end
   end
 
@@ -342,8 +362,7 @@ defmodule DetsPlus do
     if exists do
       {:reply, false, state}
     else
-      {:reply, :ok, state} = handle_call({:insert, tuples}, from, state)
-      {:reply, true, state}
+      handle_call({:insert, tuples}, from, state)
     end
   end
 
