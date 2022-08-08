@@ -730,12 +730,9 @@ defmodule DetsPlus do
         {:ok, data} ->
           data = data <> :binary.copy(<<0>>, @slot_size * batch_size - byte_size(data))
           # all zeros means there is no entry address stored yet
-          for(<<x::unsigned-size(@slot_size_bits) <- data>>, do: x == 0)
-          |> Enum.with_index()
-          |> Enum.find(fn {x, _index} -> x end)
-          |> case do
+          case find_free_slot(data) do
             nil -> {slot, false}
-            {true, idx} -> {slot + idx, true}
+            idx -> {slot + idx, true}
           end
       end
 
@@ -748,6 +745,14 @@ defmodule DetsPlus do
         )
     else
       file_put_entry_probe(fp, base_offset, slot + batch_size, slot_count, value)
+    end
+  end
+
+  defp find_free_slot(data, slot \\ 0) do
+    case data do
+      <<>> -> nil
+      <<0::unsigned-size(@slot_size_bits), _::binary>> -> slot
+      <<_::unsigned-size(@slot_size_bits), rest::binary>> -> find_free_slot(rest, slot + 1)
     end
   end
 
