@@ -18,9 +18,9 @@ encoded header https://cr.yp.to/cdb.html
 
 Limits are:
 
-Total file size: 18.446 Petabyte
-Maximum entry size: 4.2 Gigabyte
-Maximum entry count: :infinity
+- Total file size: 18.446 Petabyte
+- Maximum entry size: 4.2 Gigabyte
+- Maximum entry count: `:infinity`
 
 ## Notes
 
@@ -32,7 +32,7 @@ The `:dets` limitation of 2gb caused me to create this library. I needed to stor
 
 ## Basic usage
 
-```
+```elixir
 {:ok, dets} = DetsPlus.open_file(:example)
 DetsPlus.insert(dets, {1, 1, 1})
 [{1, 1, 1}] = DetsPlus.lookup(dets, 1)
@@ -72,7 +72,7 @@ The docs can be found at [https://hexdocs.pm/dets_plus](https://hexdocs.pm/dets_
 As mentioned above reading `DetsPlus` is slower than `:dets` because `DetsPlus` is reading from disk primarily. Here 
 some measurements:
 
-```
+```bash
 $ mix run bench/dets_plus.exs 
 running write test: dets
 4.609s
