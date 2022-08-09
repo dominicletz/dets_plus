@@ -69,7 +69,7 @@ defmodule DetsPlus do
 
     Arguments:
 
-    - `auto_save` - The autosave interval. If the interval is an integer Time, the table is flushed to disk whenever it is not accessed for Time milliseconds. A table that has been flushed requires no reparation when reopened after an uncontrolled emulator halt. If the interval is the atom infinity, autosave is disabled. Defaults to 180000 (3 minutes).
+    - `auto_save` - The autosave interval. If the interval is an integer Time, the table is flushed to disk whenever it is not accessed for Time milliseconds. If the interval is the atom infinity, autosave is disabled. Defaults to `180_000` (3 minutes).
     - `keypos` - The position of the element of each object to be used as key. Defaults to 1. The ability to explicitly state the key position is most convenient when we want to store Erlang records in which the first position of the record is the name of the record type.
   """
   def open_file(name, args \\ []) when is_atom(name) do
@@ -81,7 +81,7 @@ defmodule DetsPlus do
         |> init_table_offsets()
       else
         mode = Keyword.get(args, :access, :read_write)
-        auto_save = Keyword.get(args, :auto_save, 18_000)
+        auto_save = Keyword.get(args, :auto_save, 180_000)
         keypos = Keyword.get(args, :keypos, 1)
         type = Keyword.get(args, :type, :set)
 
