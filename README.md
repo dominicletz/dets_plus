@@ -73,30 +73,39 @@ some measurements:
 
 ```bash
 $ mix run bench/dets_plus.exs 
+running sync_test 150_000 test: Elixir.DetsPlus
+1.426s
+1.406s
+1.363s
+running sync_test 1_500_000 test: Elixir.DetsPlus
+18.489s
+18.567s
+18.031s
+
 running write test: dets
-4.609s
-4.333s
-4.338s
+4.491s
+4.502s
+4.658s
 running write test: Elixir.DetsPlus
-3.241s
-3.209s
-3.263s
+1.885s
+1.853s
+1.842s
 
 running rw test: dets
-3.326s
-3.263s
-3.412s
+3.026s
+3.023s
+2.981s
 running rw test: Elixir.DetsPlus
-3.582s
-3.483s
-3.468s
+2.986s
+2.996s
+2.946s
 
 running read test: dets
-0.987s
-0.962s
-1.04s
+1.079s
+0.992s
+1.017s
 running read test: Elixir.DetsPlus
-4.136s
-4.074s
-4.155s
+4.251s
+4.229s
+4.303s
 ```

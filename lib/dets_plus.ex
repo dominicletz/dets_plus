@@ -603,20 +603,78 @@ defmodule DetsPlus do
   end
 
   defp write_to_file(
-         state = %DetsPlus{fp: fp},
+         state = %DetsPlus{fp: fp, slot_counts: slot_counts},
          new_file_offset,
          new_dataset,
          old_file
        ) do
     writer = FileWriter.new(fp, new_file_offset, module: PagedFile)
+    prober = Task.async(fn -> prober(fp) end)
 
     writer =
-      iterate(state, writer, new_dataset, old_file, fn writer, entry_hash, entry ->
-        file_put_entry(state, entry_hash, entry, writer)
+      iterate(state, writer, new_dataset, old_file, fn writer, hash, entry ->
+        size = byte_size(entry)
+        table_idx = rem(hash, 256)
+
+        slot_count = Map.get(slot_counts, table_idx)
+        slot = rem(div(hash, 256), slot_count)
+        base_offset = table_offset(state, table_idx)
+        offset = FileWriter.offset(writer)
+        send(prober.pid, {base_offset, slot, slot_count, offset})
+
+        FileWriter.write(writer, <<size::unsigned-size(@entry_size_size_bits), entry::binary()>>)
       end)
+
+    send(prober.pid, :exit)
+    Task.await(prober, :infinity)
 
     FileWriter.close(writer)
     %DetsPlus{state | file_size: FileWriter.offset(writer)}
+  end
+
+  defp prober(fp, known \\ %{}, writes \\ [], n \\ 0) do
+    receive do
+      :exit ->
+        :ok = PagedFile.pwrite(fp, writes)
+        :ok
+
+      {base_offset, slot0, slot_count, value} ->
+        {slot, not_free} = prober_next_free(known, base_offset, slot0)
+
+        # if slot0 != slot, do: IO.inspect({:slot, base_offset, slot0, slot})
+
+        writes = [
+          {base_offset + slot * @slot_size, <<value::unsigned-size(@slot_size_bits)>>} | writes
+        ]
+
+        next_free = rem(slot + 1, slot_count)
+
+        known =
+          Enum.reduce(not_free, known, fn nf, known ->
+            Map.put(known, {base_offset, nf}, next_free)
+          end)
+
+        n = n + 1
+
+        if n > 32_000 do
+          PagedFile.pwrite(fp, writes)
+          prober(fp, known)
+        else
+          prober(fp, known, writes, n)
+        end
+
+    end
+  end
+
+  defp prober_next_free(known, base_offset, slot) do
+    case Map.get(known, {base_offset, slot}) do
+      nil ->
+        {slot, [slot]}
+
+      other_slot ->
+        {free_slot, not_free} = prober_next_free(known, base_offset, other_slot)
+        {free_slot, [slot | not_free]}
+    end
   end
 
   # this function takes a new_dataset and an old file and merges them, it calls
@@ -718,65 +776,48 @@ defmodule DetsPlus do
     Map.get(offsets, table_idx)
   end
 
-  defp file_put_entry(
-         state = %DetsPlus{fp: fp, slot_counts: slot_counts},
-         hash,
-         entry,
-         writer
-       ) do
-    size = byte_size(entry)
-    table_idx = rem(hash, 256)
+  # # recursivley retry next slot if current slot is used already
+  # defp file_put_entry_probe(fp, base_offset, slot, slot_count, value) do
+  #   slot = rem(slot, slot_count)
+  #   # There could be some analytics here for number of probings worst case etc...
 
-    slot_count = Map.get(slot_counts, table_idx)
-    slot = rem(div(hash, 256), slot_count)
-    base_offset = table_offset(state, table_idx)
-    file_put_entry_probe(fp, base_offset, slot, slot_count, FileWriter.offset(writer))
+  #   # probe batching to improve file io
+  #   batch_size = min(32, slot_count - slot)
 
-    FileWriter.write(writer, <<size::unsigned-size(@entry_size_size_bits), entry::binary()>>)
-  end
+  #   {slot, probe} =
+  #     case PagedFile.pread(fp, base_offset + slot * @slot_size, @slot_size * batch_size) do
+  #       # eof means the file has not been extended yet, so safe to write
+  #       :eof ->
+  #         {slot, true}
 
-  # recursivley retry next slot if current slot is used already
-  defp file_put_entry_probe(fp, base_offset, slot, slot_count, value) do
-    slot = rem(slot, slot_count)
-    # There could be some analytics here for number of probings worst case etc...
+  #       {:ok, data} ->
+  #         data = data <> :binary.copy(<<0>>, @slot_size * batch_size - byte_size(data))
+  #         # all zeros means there is no entry address stored yet
+  #         case find_free_slot(data) do
+  #           nil -> {slot, false}
+  #           idx -> {slot + idx, true}
+  #         end
+  #     end
 
-    # probe batching to improve file io
-    batch_size = min(32, slot_count - slot)
+  #   if probe do
+  #     :ok =
+  #       PagedFile.pwrite(
+  #         fp,
+  #         base_offset + slot * @slot_size,
+  #         <<value::unsigned-size(@slot_size_bits)>>
+  #       )
+  #   else
+  #     file_put_entry_probe(fp, base_offset, slot + batch_size, slot_count, value)
+  #   end
+  # end
 
-    {slot, probe} =
-      case PagedFile.pread(fp, base_offset + slot * @slot_size, @slot_size * batch_size) do
-        # eof means the file has not been extended yet, so safe to write
-        :eof ->
-          {slot, true}
-
-        {:ok, data} ->
-          data = data <> :binary.copy(<<0>>, @slot_size * batch_size - byte_size(data))
-          # all zeros means there is no entry address stored yet
-          case find_free_slot(data) do
-            nil -> {slot, false}
-            idx -> {slot + idx, true}
-          end
-      end
-
-    if probe do
-      :ok =
-        PagedFile.pwrite(
-          fp,
-          base_offset + slot * @slot_size,
-          <<value::unsigned-size(@slot_size_bits)>>
-        )
-    else
-      file_put_entry_probe(fp, base_offset, slot + batch_size, slot_count, value)
-    end
-  end
-
-  defp find_free_slot(data, slot \\ 0) do
-    case data do
-      <<>> -> nil
-      <<0::unsigned-size(@slot_size_bits), _::binary>> -> slot
-      <<_::unsigned-size(@slot_size_bits), rest::binary>> -> find_free_slot(rest, slot + 1)
-    end
-  end
+  # defp find_free_slot(data, slot \\ 0) do
+  #   case data do
+  #     <<>> -> nil
+  #     <<0::unsigned-size(@slot_size_bits), _::binary>> -> slot
+  #     <<_::unsigned-size(@slot_size_bits), rest::binary>> -> find_free_slot(rest, slot + 1)
+  #   end
+  # end
 
   defp file_lookup(%DetsPlus{file_entries: 0}, _key), do: []
 

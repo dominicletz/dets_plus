@@ -85,7 +85,7 @@ defmodule DetsPlus.Bench do
 
   def sync_test(dets, module, _test_size) do
     :ok = module.sync(dets)
-    if module != :dets, do: IO.inspect(module.info(dets, :creation_stats))
+    # if module != :dets, do: IO.inspect(module.info(dets, :creation_stats))
     module.close(dets)
   end
 
@@ -105,6 +105,7 @@ defmodule DetsPlus.Bench do
         IO.puts("#{div(time, 1000) / 1000}s")
       end
     end
+    IO.puts("")
   end
 
   defp tc(fun, args) do
@@ -114,13 +115,13 @@ defmodule DetsPlus.Bench do
 
   def run() do
     # :observer.start()
-    context = %{rounds: 3, modules: [DetsPlus], prepare: &prepare_sync_test/2, test_size: 0}
-    run(%{context | test_size: 150_000}, "sync_test", &sync_test/3)
-    run(%{context | test_size: 1_500_000}, "sync_test", &sync_test/3)
+    context = %{rounds: 3, modules: [DetsPlus], prepare: &prepare_sync_test/2, test_size: 50_000}
+    run(%{context | test_size: 150_000}, "sync_test 150_000", &sync_test/3)
+    run(%{context | test_size: 1_500_000}, "sync_test 1_500_000", &sync_test/3)
 
-    # context = %{rounds: 3, test_size: 50_000, modules: [:dets, DetsPlus]}
-    # run(context, "write", &write_test/2)
-    # run(context, "rw", &test/2)
-    # run(context, "read", &read_test/2)
+    context = %{context | modules: [:dets, DetsPlus], prepare: nil}
+    run(context, "write", &write_test/2)
+    run(context, "rw", &test/2)
+    run(context, "read", &read_test/2)
   end
 end
