@@ -66,7 +66,8 @@ defmodule DetsPlus.MixProject do
       {:ex_doc, "~> 0.28", only: :dev, runtime: false},
       {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.2", only: [:dev], runtime: false},
-      {:paged_file, "~> 1.0"}
+      # {:paged_file, "~> 1.0"}
+      {:paged_file, path: "../paged_file"}
     ]
   end
 end

@@ -57,7 +57,8 @@ defmodule DetsPlus do
     :sync,
     :sync_waiters,
     :file_size,
-    :sync_fallback
+    :sync_fallback,
+    :creation_stats
   ]
 
   @version 1
@@ -297,7 +298,7 @@ defmodule DetsPlus do
   @spec info(atom | pid, :file_size | :filename | :keypos | :size | :type) :: any()
   def info(pid, item)
       when item == :file_size or item == :filename or item == :keypos or item == :size or
-             item == :type do
+             item == :type or item == :creation_stats do
     case info(pid) do
       nil -> nil
       list -> Keyword.get(list, item)
@@ -392,11 +393,21 @@ defmodule DetsPlus do
           type: type,
           ets: ets,
           file_size: file_size,
-          file_entries: file_entries
+          file_entries: file_entries,
+          creation_stats: creation_stats
         }
       ) do
     size = :ets.info(ets, :size) + file_entries
-    info = [file_size: file_size, filename: filename, keypos: keypos, size: size, type: type]
+
+    info = [
+      file_size: file_size,
+      filename: filename,
+      keypos: keypos,
+      size: size,
+      type: type,
+      creation_stats: creation_stats
+    ]
+
     {:reply, info, state}
   end
 
@@ -458,6 +469,11 @@ defmodule DetsPlus do
     state
   end
 
+  defp add_stats({prev, stats}, label) do
+    now = :erlang.timestamp()
+    {now, [{label, div(:timer.now_diff(now, prev), 1000)} | stats]}
+  end
+
   defp spawn_sync_worker(
          state = %DetsPlus{
            ets: ets,
@@ -473,7 +489,10 @@ defmodule DetsPlus do
 
     worker =
       spawn_link(fn ->
+        stats = {:erlang.timestamp(), []}
         new_dataset = :ets.tab2list(ets)
+
+        stats = add_stats(stats, :ets_flushed)
         send(dets, :continue)
 
         # Ensuring hash function sort order
@@ -481,6 +500,7 @@ defmodule DetsPlus do
           parallel_hash(state, new_dataset)
           |> Enum.sort_by(fn {hash, _tuple} -> hash end, :asc)
 
+        stats = add_stats(stats, :ets_sorted)
         new_filename = "#{filename}.buffer"
 
         # opts =
@@ -502,10 +522,13 @@ defmodule DetsPlus do
             nil
           end
 
+        stats = add_stats(stats, :initialize)
         state = pre_scan_file(state, new_dataset, old_file)
+        stats = add_stats(stats, :pre_scan)
 
         PagedFile.delete(new_filename)
         {:ok, new_file} = PagedFile.open(new_filename, opts)
+        stats = add_stats(stats, :fopen)
 
         state =
           %DetsPlus{state | fp: new_file}
@@ -513,8 +536,14 @@ defmodule DetsPlus do
           |> store_state(new_file)
           |> init_table_offsets()
 
+        stats = add_stats(stats, :header_store)
         state = write_to_file(state, table_offset(state, 256), new_dataset, old_file)
+        stats = add_stats(stats, :write_to_file)
+
         PagedFile.close(new_file)
+        {_, stats} = add_stats(stats, :file_close)
+
+        state = %DetsPlus{state | creation_stats: stats}
         GenServer.cast(dets, {:sync_complete, new_filename, state})
       end)
 
@@ -574,20 +603,20 @@ defmodule DetsPlus do
   end
 
   defp write_to_file(
-         state = %DetsPlus{},
+         state = %DetsPlus{fp: fp},
          new_file_offset,
          new_dataset,
          old_file
        ) do
-    {state, new_file_offset} =
-      iterate(state, {state, new_file_offset}, new_dataset, old_file, fn {state, new_file_offset},
-                                                                         entry_hash,
-                                                                         entry ->
-        new_file_offset = file_put_entry(state, entry_hash, entry, new_file_offset)
-        {state, new_file_offset}
+    writer = FileWriter.new(fp, new_file_offset, module: PagedFile)
+
+    writer =
+      iterate(state, writer, new_dataset, old_file, fn writer, entry_hash, entry ->
+        file_put_entry(state, entry_hash, entry, writer)
       end)
 
-    %DetsPlus{state | file_size: new_file_offset}
+    FileWriter.close(writer)
+    %DetsPlus{state | file_size: FileWriter.offset(writer)}
   end
 
   # this function takes a new_dataset and an old file and merges them, it calls
@@ -693,7 +722,7 @@ defmodule DetsPlus do
          state = %DetsPlus{fp: fp, slot_counts: slot_counts},
          hash,
          entry,
-         offset
+         writer
        ) do
     size = byte_size(entry)
     table_idx = rem(hash, 256)
@@ -701,16 +730,9 @@ defmodule DetsPlus do
     slot_count = Map.get(slot_counts, table_idx)
     slot = rem(div(hash, 256), slot_count)
     base_offset = table_offset(state, table_idx)
-    file_put_entry_probe(fp, base_offset, slot, slot_count, offset)
+    file_put_entry_probe(fp, base_offset, slot, slot_count, FileWriter.offset(writer))
 
-    :ok =
-      PagedFile.pwrite(
-        fp,
-        offset,
-        <<size::unsigned-size(@entry_size_size_bits), entry::binary()>>
-      )
-
-    offset + size + @entry_size_size
+    FileWriter.write(writer, <<size::unsigned-size(@entry_size_size_bits), entry::binary()>>)
   end
 
   # recursivley retry next slot if current slot is used already
