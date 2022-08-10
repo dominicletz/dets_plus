@@ -140,6 +140,7 @@ defmodule DetsPlus do
     }
   end
 
+  @wfile PagedFile
   defp store_state(state = %DetsPlus{}, fp) do
     bin =
       :erlang.term_to_binary(
@@ -156,8 +157,7 @@ defmodule DetsPlus do
       )
 
     size = byte_size(bin)
-    :ok = PagedFile.pwrite(fp, 0, <<size::unsigned-size(@entry_size_size_bits)>>)
-    :ok = PagedFile.pwrite(fp, @entry_size_size, bin)
+    :ok = @wfile.pwrite(fp, 0, <<size::unsigned-size(@entry_size_size_bits), bin::binary()>>)
     %DetsPlus{state | header_offset: size + @entry_size_size}
   end
 
@@ -501,15 +501,6 @@ defmodule DetsPlus do
           |> Enum.sort_by(fn {hash, _tuple} -> hash end, :asc)
 
         stats = add_stats(stats, :ets_sorted)
-        new_filename = "#{filename}.buffer"
-
-        # opts =
-        #   if String.ends_with?(filename, ".gz") do
-        #     [:raw, :read, :read_ahead, :write, :delayed_write, :binary, :compressed]
-        #   else
-        #     [:raw, :read, :read_ahead, :write, :delayed_write, :binary]
-        #   end
-        opts = [page_size: 1_000_000, max_pages: 1000]
 
         # setting the bloom size based of a size estimate
         bloom_size = (file_entries + length(new_dataset)) * 10
@@ -526,8 +517,11 @@ defmodule DetsPlus do
         state = pre_scan_file(state, new_dataset, old_file)
         stats = add_stats(stats, :pre_scan)
 
-        PagedFile.delete(new_filename)
-        {:ok, new_file} = PagedFile.open(new_filename, opts)
+        new_filename = "#{filename}.buffer"
+        @wfile.delete(new_filename)
+        # opts = [page_size: 1_000_000, max_pages: 1000]
+        opts = [:binary, :write]
+        {:ok, new_file} = @wfile.open(new_filename, opts)
         stats = add_stats(stats, :fopen)
 
         state =
@@ -540,7 +534,7 @@ defmodule DetsPlus do
         state = write_to_file(state, table_offset(state, 256), new_dataset, old_file)
         stats = add_stats(stats, :write_to_file)
 
-        PagedFile.close(new_file)
+        @wfile.close(new_file)
         {_, stats} = add_stats(stats, :file_close)
 
         state = %DetsPlus{state | creation_stats: stats}
@@ -608,7 +602,7 @@ defmodule DetsPlus do
          new_dataset,
          old_file
        ) do
-    writer = FileWriter.new(fp, new_file_offset, module: PagedFile)
+    writer = FileWriter.new(fp, new_file_offset, module: @wfile)
     prober = Task.async(fn -> prober(fp) end)
 
     writer =
@@ -635,7 +629,7 @@ defmodule DetsPlus do
   defp prober(fp, known \\ %{}, writes \\ [], n \\ 0) do
     receive do
       :exit ->
-        :ok = PagedFile.pwrite(fp, writes)
+        :ok = @wfile.pwrite(fp, writes)
         :ok
 
       {base_offset, slot0, slot_count, value} ->
@@ -657,12 +651,11 @@ defmodule DetsPlus do
         n = n + 1
 
         if n > 32_000 do
-          PagedFile.pwrite(fp, writes)
+          @wfile.pwrite(fp, writes)
           prober(fp, known)
         else
           prober(fp, known, writes, n)
         end
-
     end
   end
 
@@ -746,19 +739,19 @@ defmodule DetsPlus do
 
   defp bloom_add(state = %DetsPlus{bloom_size: bloom_size, bloom: {ram_file, keys, n}}, hash) do
     key = rem(hash, bloom_size)
-    keys = [key | keys]
+    keys = [{key, <<1>>} | keys]
     n = n + 1
 
     if n < 128 do
       %DetsPlus{state | bloom: {ram_file, keys, n}}
     else
-      :ok = :file.pwrite(ram_file, Enum.zip(keys, List.duplicate(<<1>>, n)))
+      :ok = :file.pwrite(ram_file, keys)
       %DetsPlus{state | bloom: {ram_file, [], 0}}
     end
   end
 
-  defp bloom_finalize(state = %DetsPlus{bloom: {ram_file, keys, n}, bloom_size: bloom_size}) do
-    :ok = :file.pwrite(ram_file, Enum.zip(keys, List.duplicate(<<1>>, n)))
+  defp bloom_finalize(state = %DetsPlus{bloom: {ram_file, keys, _n}, bloom_size: bloom_size}) do
+    :ok = :file.pwrite(ram_file, keys)
     {:ok, binary} = :file.pread(ram_file, 0, bloom_size)
     :file.close(ram_file)
     %DetsPlus{state | bloom: binary}
@@ -775,49 +768,6 @@ defmodule DetsPlus do
   defp table_offset(%DetsPlus{table_offsets: offsets}, table_idx) do
     Map.get(offsets, table_idx)
   end
-
-  # # recursivley retry next slot if current slot is used already
-  # defp file_put_entry_probe(fp, base_offset, slot, slot_count, value) do
-  #   slot = rem(slot, slot_count)
-  #   # There could be some analytics here for number of probings worst case etc...
-
-  #   # probe batching to improve file io
-  #   batch_size = min(32, slot_count - slot)
-
-  #   {slot, probe} =
-  #     case PagedFile.pread(fp, base_offset + slot * @slot_size, @slot_size * batch_size) do
-  #       # eof means the file has not been extended yet, so safe to write
-  #       :eof ->
-  #         {slot, true}
-
-  #       {:ok, data} ->
-  #         data = data <> :binary.copy(<<0>>, @slot_size * batch_size - byte_size(data))
-  #         # all zeros means there is no entry address stored yet
-  #         case find_free_slot(data) do
-  #           nil -> {slot, false}
-  #           idx -> {slot + idx, true}
-  #         end
-  #     end
-
-  #   if probe do
-  #     :ok =
-  #       PagedFile.pwrite(
-  #         fp,
-  #         base_offset + slot * @slot_size,
-  #         <<value::unsigned-size(@slot_size_bits)>>
-  #       )
-  #   else
-  #     file_put_entry_probe(fp, base_offset, slot + batch_size, slot_count, value)
-  #   end
-  # end
-
-  # defp find_free_slot(data, slot \\ 0) do
-  #   case data do
-  #     <<>> -> nil
-  #     <<0::unsigned-size(@slot_size_bits), _::binary>> -> slot
-  #     <<_::unsigned-size(@slot_size_bits), rest::binary>> -> find_free_slot(rest, slot + 1)
-  #   end
-  # end
 
   defp file_lookup(%DetsPlus{file_entries: 0}, _key), do: []
 
@@ -912,12 +862,6 @@ defmodule DetsPlus do
   defp do_string(string) when is_binary(string), do: string
 
   defp file_open(filename) do
-    # opts =
-    #   if String.ends_with?(filename, ".gz") do
-    #     [:read, :read_ahead, :binary, :compressed]
-    #   else
-    #     [:read, :read_ahead, :binary]
-    #   end
     opts = [page_size: 1_000_000, max_pages: 1000]
     {:ok, fp} = PagedFile.open(filename, opts)
     fp

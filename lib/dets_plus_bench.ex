@@ -105,7 +105,17 @@ defmodule DetsPlus.Bench do
         IO.puts("#{div(time, 1000) / 1000}s")
       end
     end
+
     IO.puts("")
+  end
+
+  def insert_flush(filename) do
+    {:ok, dets} = DetsPlus.open_file(String.to_atom(filename))
+    DetsPlus.insert(dets, {1, 1})
+    {time, _} = :timer.tc(fn -> DetsPlus.sync(dets) end)
+    IO.puts("#{div(time, 1000)}ms")
+    IO.puts("#{inspect(DetsPlus.info(dets, :creation_stats))}")
+    DetsPlus.close(dets)
   end
 
   defp tc(fun, args) do

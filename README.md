@@ -72,7 +72,7 @@ As mentioned above reading `DetsPlus` is slower than `:dets` because `DetsPlus` 
 some measurements:
 
 ```bash
-$ mix run bench/dets_plus.exs 
+$ mix run scripts/bench.exs 
 running sync_test 150_000 test: Elixir.DetsPlus
 1.426s
 1.406s
