@@ -5,7 +5,7 @@ defmodule FileReader do
   """
   defstruct [:fp, :module, :buffer_size, :offset, :chunk]
 
-  def new(fp, loc, opts \\ []) do
+  def new(fp, start_offset \\ 0, opts \\ []) when is_integer(start_offset) do
     module = Keyword.get(opts, :module, :file)
     buffer_size = Keyword.get(opts, :buffer_size, 64_000)
 
@@ -13,9 +13,13 @@ defmodule FileReader do
       fp: fp,
       module: module,
       buffer_size: buffer_size,
-      offset: loc,
+      offset: start_offset,
       chunk: ""
     }
+  end
+
+  def offset(%FileReader{offset: offset, chunk: chunk}) do
+    offset - byte_size(chunk)
   end
 
   def read(state = %FileReader{buffer_size: buffer_size, chunk: chunk}, n)

@@ -5,7 +5,7 @@ defmodule FileWriter do
   """
   defstruct [:fp, :module, :buffer_size, :offset, :chunk, :chunk_size]
 
-  def new(fp, loc, opts \\ []) do
+  def new(fp, start_offset \\ 0, opts \\ []) when is_integer(start_offset) do
     module = Keyword.get(opts, :module, :file)
     buffer_size = Keyword.get(opts, :buffer_size, 512_000)
 
@@ -13,7 +13,7 @@ defmodule FileWriter do
       fp: fp,
       module: module,
       buffer_size: buffer_size,
-      offset: loc,
+      offset: start_offset,
       chunk: [],
       chunk_size: 0
     }
@@ -38,11 +38,11 @@ defmodule FileWriter do
     offset + chunk_size
   end
 
-  def close(state = %FileWriter{chunk_size: 0}) do
+  def sync(state = %FileWriter{chunk_size: 0}) do
     state
   end
 
-  def close(state = %FileWriter{}) do
+  def sync(state = %FileWriter{}) do
     write_chunk(state)
   end
 
@@ -57,7 +57,7 @@ defmodule FileWriter do
        ) do
     bin = :erlang.iolist_to_binary(Enum.reverse(chunk))
     ^chunk_size = byte_size(bin)
-    module.pwrite(fp, offset, bin)
+    :ok = module.pwrite(fp, offset, bin)
     %FileWriter{state | chunk: [], chunk_size: 0, offset: offset + chunk_size}
   end
 end

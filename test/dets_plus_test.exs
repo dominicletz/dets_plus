@@ -18,6 +18,8 @@ defmodule DetsPlus.Test do
 
       DetsPlus.sync(dets)
 
+      # IO.inspect({:dets, Enum.to_list(dets) |> Enum.sort()})
+
       for x <- range do
         assert DetsPlus.lookup(dets, x) == [{x}]
       end
