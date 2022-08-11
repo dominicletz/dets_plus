@@ -32,7 +32,7 @@ defmodule DetsPlus do
 
   # We're using sha256 as source - should not have conflicts ever
   @hash_size 8
-  # @hash_size_bits @hash_size * 8
+  @hash_size_bits @hash_size * 8
 
   @version 2
 
@@ -683,7 +683,6 @@ defmodule DetsPlus do
     state = %State{state | file_entries: 0, slot_counts: %{}}
     writer = FileWriter.new(fp, 0, module: @wfile)
     writer = FileWriter.write(writer, "DET+")
-
     entries = EntryWriter.new()
 
     {:done, {state, entries, writer}} =
@@ -724,7 +723,9 @@ defmodule DetsPlus do
     %State{slot_counts: slot_counts} = state
 
     new_slot_counts =
-      Enum.map(slot_counts, fn {key, value} -> {key, trunc(value * 1.5) + 1} end)
+      Enum.map(slot_counts, fn {key, value} ->
+        {key, next_power_of_two(trunc(value * 1.3) + 1)}
+      end)
       |> Map.new()
 
     state =
@@ -759,6 +760,10 @@ defmodule DetsPlus do
     FileWriter.sync(writer)
     state
   end
+
+  defp next_power_of_two(n), do: next_power_of_two(n, 2)
+  defp next_power_of_two(n, x) when n < x, do: x
+  defp next_power_of_two(n, x), do: next_power_of_two(n, x * 2)
 
   defp reduce_entries(entries, writer, slot_count),
     do: reduce_entries(entries, writer, slot_count, -1, [])
@@ -893,8 +898,11 @@ defmodule DetsPlus do
     %State{state | bloom_size: bloom_size, bloom: {ram_file, [], 0}}
   end
 
-  defp bloom_add(state = %State{bloom_size: bloom_size, bloom: {ram_file, keys, n}}, hash) do
-    key = slot_idx(hash, bloom_size)
+  defp bloom_add(
+         state = %State{bloom_size: bloom_size, bloom: {ram_file, keys, n}},
+         <<hash::unsigned-size(@hash_size_bits)>>
+       ) do
+    key = rem(hash, bloom_size)
     keys = [{key, <<1>>} | keys]
     n = n + 1
 
@@ -913,8 +921,11 @@ defmodule DetsPlus do
     %State{state | bloom: binary}
   end
 
-  defp bloom_lookup(%State{bloom_size: bloom_size, bloom: bloom}, hash) do
-    :binary.at(bloom, slot_idx(hash, bloom_size)) == 1
+  defp bloom_lookup(
+         %State{bloom_size: bloom_size, bloom: bloom},
+         <<hash::unsigned-size(@hash_size_bits)>>
+       ) do
+    :binary.at(bloom, rem(hash, bloom_size)) == 1
   end
 
   defp table_offset(%State{table_offsets: nil}, _table_idx) do
@@ -1010,9 +1021,19 @@ defmodule DetsPlus do
     idx
   end
 
+  defp bits_of_power_of_two(2), do: 1
+  defp bits_of_power_of_two(256), do: 8
+  defp bits_of_power_of_two(65_536), do: 16
+  defp bits_of_power_of_two(16_777_216), do: 24
+  defp bits_of_power_of_two(4_294_967_296), do: 32
+  defp bits_of_power_of_two(x), do: bits_of_power_of_two(div(x, 2)) + 1
+
   # get a slot idx from the hash value
-  defp slot_idx(<<_, value::unsigned-size(56)>>, size) do
-    rem(value, size)
+  defp slot_idx(<<_, rest::binary-size(7)>>, size) do
+    bits = bits_of_power_of_two(size)
+    r = 56 - bits
+    <<slot::unsigned-size(bits), _::unsigned-size(r)>> = rest
+    slot
   end
 
   defp do_string(atom) when is_atom(atom), do: Atom.to_string(atom)
