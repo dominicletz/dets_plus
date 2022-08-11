@@ -224,7 +224,7 @@ defmodule DetsPlus do
   @doc """
     Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
-  @spec insert(DetsPlus.t(), tuple()) :: :ok | {:error, atom()}
+  @spec insert(DetsPlus.t(), tuple() | [tuple()]) :: :ok | {:error, atom()}
   def insert(%__MODULE__{pid: pid}, tuple) do
     call(pid, {:insert, tuple})
   end
@@ -232,7 +232,7 @@ defmodule DetsPlus do
   @doc """
   Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
-  @spec insert(DetsPlus.t(), tuple()) :: true | false
+  @spec insert_new(DetsPlus.t(), tuple() | [tuple()]) :: true | false
   def insert_new(%__MODULE__{pid: pid}, tuple) do
     case call(pid, {:insert_new, tuple}) do
       :ok -> true
@@ -343,7 +343,8 @@ defmodule DetsPlus do
   - `{size, integer() >= 0}` - The number of objects estimated in the table.
   - `{type, type()}` - The table type.
   """
-  @spec info(DetsPlus.t(), :file_size | :filename | :keypos | :size | :type) :: any()
+  @spec info(DetsPlus.t(), :file_size | :filename | :keypos | :size | :type | :creation_stats) ::
+          any()
   def info(dets, item)
       when item == :file_size or item == :filename or item == :keypos or item == :size or
              item == :type or item == :creation_stats do
@@ -631,8 +632,7 @@ defmodule DetsPlus do
 
         new_filename = "#{filename}.buffer"
         @wfile.delete(new_filename)
-        # opts = [page_size: 1_000_000, max_pages: 1000]
-        opts = [:binary, :write]
+        opts = [page_size: 512_000, max_pages: 250]
         {:ok, new_file} = @wfile.open(new_filename, opts)
         state = %State{state | fp: new_file}
         stats = add_stats(stats, :fopen)
