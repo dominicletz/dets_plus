@@ -89,6 +89,13 @@ defmodule DetsPlus.Bench do
     module.close(dets)
   end
 
+  def sync_test2(module, _test_size) do
+    filename = 'test_file_dets_write_bench.#{module}'
+    {:ok, dets} = module.open_file(:test_file_dets_bench, file: filename, auto_save: :never)
+    module.insert(dets, {1, 1})
+    module.close(dets)
+  end
+
   def run(context = %{test_size: test_size, modules: modules, rounds: rounds}, label, fun) do
     for module <- modules do
       IO.puts("running #{label} test: #{module}")
@@ -128,6 +135,10 @@ defmodule DetsPlus.Bench do
     context = %{rounds: 3, modules: [DetsPlus], prepare: &prepare_sync_test/2, test_size: 50_000}
     run(%{context | test_size: 150_000}, "sync_test 150_000", &sync_test/3)
     run(%{context | test_size: 6_000_000}, "sync_test 1_500_000", &sync_test/3)
+
+    context = %{context | prepare: nil}
+    run(%{context | test_size: 150_000}, "sync_test2 150_000", &sync_test2/2)
+    run(%{context | test_size: 6_000_000}, "sync_test2 1_500_000", &sync_test2/2)
 
     # context = %{context | modules: [:dets, DetsPlus], prepare: nil}
     # run(context, "write", &write_test/2)

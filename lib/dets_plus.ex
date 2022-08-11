@@ -44,6 +44,7 @@ defmodule DetsPlus do
   @type t :: %__MODULE__{pid: pid()}
 
   defmodule State do
+    @moduledoc false
     @enforce_keys [:version]
     defstruct [
       :version,
@@ -157,8 +158,8 @@ defmodule DetsPlus do
   end
 
   @wfile PagedFile
-  defp store_state(state = %State{}, writer) do
-    offset = FileWriter.offset(writer)
+  defp store_state(state = %State{fp: fp}) do
+    offset = @wfile.size(fp)
 
     bin =
       :erlang.term_to_binary(
@@ -173,11 +174,8 @@ defmodule DetsPlus do
         [:compressed]
       )
 
-    writer =
-      FileWriter.write(writer, bin)
-      |> FileWriter.write(<<offset::unsigned-size(@slot_size_bits)>>)
-
-    {state, writer}
+    @wfile.pwrite(fp, offset, bin <> <<offset::unsigned-size(@slot_size_bits)>>)
+    state
   end
 
   @impl true
@@ -213,6 +211,14 @@ defmodule DetsPlus do
   def close(%__MODULE__{pid: pid}) do
     call(pid, :sync)
     GenServer.stop(pid)
+  end
+
+  @doc """
+  Deletes all objects from a table in almost constant time.
+  """
+  @spec delete_all_objects(DetsPlus.t()) :: :ok | {:error, atom()}
+  def delete_all_objects(%__MODULE__{pid: pid}) do
+    call(pid, :delete_all_objects)
   end
 
   @doc """
@@ -307,6 +313,14 @@ defmodule DetsPlus do
   end
 
   @doc """
+  Starts a sync of all changes to the disk. Same as `sync/1` but doesn't block
+  """
+  @spec start_sync(DetsPlus.t()) :: :ok
+  def start_sync(%__MODULE__{pid: pid}) do
+    call(pid, :start_sync, :infinity)
+  end
+
+  @doc """
   Returns information about table Name as a list of tuples:
 
   - `{file_size, integer() >= 0}}` - The file size, in bytes.
@@ -346,6 +360,43 @@ defmodule DetsPlus do
   @impl true
   def handle_call(:get_handle, _from, state = %State{ets: ets}) do
     {:reply, %DetsPlus{pid: self(), ets: ets}, state}
+  end
+
+  def handle_call(
+        :delete_all_objects,
+        _from,
+        state = %State{fp: fp, ets: ets, sync: sync, sync_waiters: waiters, filename: filename}
+      ) do
+    :ets.delete_all_objects(ets)
+
+    if is_pid(sync) do
+      Process.unlink(sync)
+      Process.exit(sync, :kill)
+    end
+
+    for w <- waiters do
+      :ok = GenServer.reply(w, :ok)
+    end
+
+    if fp != nil do
+      PagedFile.close(fp)
+    end
+
+    PagedFile.delete(filename)
+
+    {:reply, :ok,
+     %State{
+       state
+       | sync: nil,
+         sync_waiters: [],
+         sync_fallback: %{},
+         fp: nil,
+         bloom: "",
+         bloom_size: 0,
+         file_entries: 0,
+         slot_counts: %{},
+         file_size: 0
+     }}
   end
 
   def handle_call(
@@ -458,6 +509,17 @@ defmodule DetsPlus do
     {:reply, info, state}
   end
 
+  def handle_call(:start_sync, _from, state = %State{sync: sync, ets: ets}) do
+    sync =
+      if sync == nil and :ets.info(ets, :size) > 0 do
+        spawn_sync_worker(state)
+      else
+        sync
+      end
+
+    {:reply, :ok, %State{state | sync: sync}}
+  end
+
   def handle_call(:sync, from, state = %State{sync: nil, ets: ets}) do
     if :ets.info(ets, :size) == 0 do
       {:reply, :ok, state}
@@ -474,11 +536,12 @@ defmodule DetsPlus do
 
   @impl true
   def handle_cast(
-        {:sync_complete, new_filename, new_state = %State{}},
+        {:sync_complete, sync_pid, new_filename, new_state = %State{}},
         %State{
           fp: fp,
           filename: filename,
           ets: ets,
+          sync: sync_pid,
           sync_waiters: waiters,
           sync_fallback: fallback
         }
@@ -498,6 +561,11 @@ defmodule DetsPlus do
     end
 
     {:noreply, %State{new_state | fp: fp, sync: nil, sync_fallback: %{}, sync_waiters: []}}
+  end
+
+  # this is pending sync finishing while a complete delete_all_objects has been executed on the state
+  def handle_cast({:sync_complete, _sync_pid, _new_filename, _new_state}, state = %State{}) do
+    {:noreply, state}
   end
 
   @impl true
@@ -568,23 +636,20 @@ defmodule DetsPlus do
         {:ok, new_file} = @wfile.open(new_filename, opts)
         state = %State{state | fp: new_file}
         stats = add_stats(stats, :fopen)
+        state = scan_file(state, new_dataset, old_file)
+        stats = add_stats(stats, :scanned)
 
-        {state, writer} = scan_file(state, new_dataset, old_file)
-        stats = add_stats(stats, :pre_scan)
-
-        {state, writer} =
-          state
-          |> bloom_finalize()
-          |> store_state(writer)
+        state =
+          bloom_finalize(state)
+          |> store_state()
 
         stats = add_stats(stats, :header_store)
 
-        FileWriter.sync(writer)
         @wfile.close(new_file)
         {_, stats} = add_stats(stats, :file_close)
 
         state = %State{state | creation_stats: stats}
-        GenServer.cast(dets, {:sync_complete, new_filename, state})
+        GenServer.cast(dets, {:sync_complete, self(), new_filename, state})
       end)
 
     # Profiler.fprof(worker)
@@ -619,10 +684,12 @@ defmodule DetsPlus do
     writer = FileWriter.new(fp, 0, module: @wfile)
     writer = FileWriter.write(writer, "DET+")
 
+    entries = EntryWriter.new()
+
     {:done, {state, entries, writer}} =
       iterate(
         hashfun,
-        {:cont, {state, [], writer}},
+        {:cont, {state, entries, writer}},
         new_dataset,
         old_file,
         fn {state = %State{file_entries: file_entries, slot_counts: slot_counts}, entries, writer},
@@ -633,8 +700,10 @@ defmodule DetsPlus do
           slot_counts = Map.update(slot_counts, table_idx, 1, fn count -> count + 1 end)
           state = bloom_add(state, entry_hash)
           state = %State{state | file_entries: file_entries + 1, slot_counts: slot_counts}
-          entries = [{entry_hash, FileWriter.offset(writer)} | entries]
           size = byte_size(entry)
+
+          entries =
+            EntryWriter.insert(entries, {table_idx, entry_hash, FileWriter.offset(writer)})
 
           writer =
             FileWriter.write(
@@ -651,6 +720,8 @@ defmodule DetsPlus do
       FileWriter.write(writer, <<0::unsigned-size(@entry_size_size_bits)>>)
       |> FileWriter.sync()
 
+    entries = EntryWriter.sync(entries)
+
     %State{slot_counts: slot_counts} = state
 
     new_slot_counts =
@@ -661,18 +732,13 @@ defmodule DetsPlus do
       %State{state | slot_counts: new_slot_counts}
       |> init_table_offsets(FileWriter.offset(writer))
 
-    tables =
-      Enum.group_by(entries, fn {entry_hash, _offset} ->
-        table_idx(entry_hash)
-      end)
-
     writer =
       0..255
       |> Enum.reduce(writer, fn table_idx, writer ->
         slot_count = Map.get(new_slot_counts, table_idx, 0)
 
         entries =
-          Map.get(tables, table_idx, [])
+          EntryWriter.lookup(entries, table_idx)
           |> Enum.map(fn {entry_hash, offset} ->
             {slot_idx(entry_hash, slot_count), offset}
           end)
@@ -690,7 +756,9 @@ defmodule DetsPlus do
         end
       end)
 
-    {state, writer}
+    EntryWriter.close(entries)
+    FileWriter.sync(writer)
+    state
   end
 
   defp reduce_entries(entries, writer, slot_count),
@@ -972,7 +1040,7 @@ defimpl Enumerable, for: DetsPlus do
 
     {fp, old_file} =
       with true <- File.exists?(filename),
-           {:ok, fp} = PagedFile.open(filename, opts) do
+           {:ok, fp} <- PagedFile.open(filename, opts) do
         old_file = FileReader.new(fp, byte_size("DET+"), module: PagedFile, buffer_size: 512_000)
         {fp, old_file}
       else
