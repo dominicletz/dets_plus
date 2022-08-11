@@ -175,7 +175,7 @@ defmodule DetsPlus do
       )
 
     @wfile.pwrite(fp, offset, bin <> <<offset::unsigned-size(@slot_size_bits)>>)
-    state
+    %State{state | file_size: @wfile.size(fp)}
   end
 
   @impl true
