@@ -637,7 +637,7 @@ defmodule DetsPlus do
         state = %State{state | fp: new_file}
         stats = add_stats(stats, :fopen)
         state = scan_file(state, new_dataset, old_file)
-        stats = add_stats(stats, :scanned)
+        stats = add_stats(stats, :scan_file)
 
         state =
           bloom_finalize(state)
@@ -721,7 +721,6 @@ defmodule DetsPlus do
       |> FileWriter.sync()
 
     entries = EntryWriter.sync(entries)
-
     %State{slot_counts: slot_counts} = state
 
     new_slot_counts =
