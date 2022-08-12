@@ -34,7 +34,7 @@ defmodule DetsPlus do
   @hash_size 8
   @hash_size_bits @hash_size * 8
 
-  @version 2
+  @version 3
 
   use GenServer
   require Logger
@@ -721,12 +721,16 @@ defmodule DetsPlus do
           size = byte_size(entry)
 
           entries =
-            EntryWriter.insert(entries, {table_idx, entry_hash, FileWriter.offset(writer)})
+            EntryWriter.insert(
+              entries,
+              {table_idx, entry_hash, FileWriter.offset(writer) + @hash_size}
+            )
 
           writer =
             FileWriter.write(
               writer,
-              <<size::unsigned-size(@entry_size_size_bits), entry::binary()>>
+              <<entry_hash::binary-size(@hash_size), size::unsigned-size(@entry_size_size_bits),
+                entry::binary()>>
             )
 
           {:cont, {state, entries, writer}}
@@ -734,7 +738,10 @@ defmodule DetsPlus do
       )
 
     # final zero offset after all data entries
-    FileWriter.write(writer, <<0::unsigned-size(@entry_size_size_bits)>>)
+    FileWriter.write(
+      writer,
+      <<0::unsigned-size(@hash_size_bits), 0::unsigned-size(@entry_size_size_bits)>>
+    )
     |> FileWriter.sync()
 
     {state, entries}
@@ -869,19 +876,20 @@ defmodule DetsPlus do
     # Reading a new entry from the file or falling back to else if there is no next
     # entry in the file anymore
     with false <- file_reader == nil,
-         {new_file_reader, <<old_size::unsigned-size(@entry_size_size_bits)>>} when old_size > 0 <-
-           FileReader.read(file_reader, @entry_size_size) do
+         {new_file_reader,
+          <<entry_hash::binary-size(@hash_size), old_size::unsigned-size(@entry_size_size_bits)>>}
+         when old_size > 0 <-
+           FileReader.read(file_reader, @hash_size + @entry_size_size) do
       {new_file_reader, old_entry} = FileReader.read(new_file_reader, old_size)
-      entry = :erlang.binary_to_term(old_entry)
-      entry_hash = hash_fun.(entry)
 
       case new_entry_hash do
         # reached end of new_dataset
         nil ->
-          iterate(hash_fun, fun.(acc, entry_hash, old_entry, entry), [], new_file_reader, fun)
+          iterate(hash_fun, fun.(acc, entry_hash, old_entry, nil), [], new_file_reader, fun)
 
         # replacing an old entry with a new entry
         ^entry_hash ->
+          # LATER - ensure there is no hash collision
           bin = :erlang.term_to_binary(new_entry)
 
           iterate(
@@ -908,7 +916,7 @@ defmodule DetsPlus do
         new_entry_hash when new_entry_hash > entry_hash ->
           iterate(
             hash_fun,
-            fun.(acc, entry_hash, old_entry, entry),
+            fun.(acc, entry_hash, old_entry, nil),
             new_dataset,
             new_file_reader,
             fun
@@ -1101,9 +1109,9 @@ defimpl Enumerable, for: DetsPlus do
     ret =
       DetsPlus.iterate(hash_fun, acc, new_dataset, old_file, fn acc,
                                                                 _entry_hash,
-                                                                _entry_blob,
+                                                                entry_blob,
                                                                 entry ->
-        fun.(entry, acc)
+        fun.(entry || :erlang.binary_to_term(entry_blob), acc)
       end)
 
     if fp != nil, do: PagedFile.close(fp)

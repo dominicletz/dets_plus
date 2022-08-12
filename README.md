@@ -76,44 +76,44 @@ some measurements:
 ```bash
 $ mix run scripts/bench.exs 
 running write test: :dets
-4.705s
-4.335s
-4.29s
+4.325s
+4.341s
+4.244s
 running write test: DetsPlus
-1.46s
-1.385s
-1.355s
+1.291s
+1.282s
+1.294s
 
 running rw test: :dets
-2.83s
-2.862s
-2.862s
+3.261s
+2.823s
+2.818s
 running rw test: DetsPlus
-2.606s
+2.576s
 2.534s
-2.564s
+2.508s
 
 running read test: :dets
-1.043s
-0.935s
-0.887s
+0.881s
+0.922s
+0.964s
 running read test: DetsPlus
-2.104s
-2.091s
-2.07s
+2.098s
+2.169s
+2.111s
 
 running sync_test: 0 + 150_000 new inserts test: DetsPlus
-1.035s
-1.056s
+1.011s
+1.003s
 1.033s
 
 running sync_test: 0 + 1_500_000 new inserts test: DetsPlus
-13.195s
-13.062s
-13.217s
+12.223s
+12.327s
+12.477s
 
 running sync_test 1_500_000 + 1 new inserts test: DetsPlus
-8.917s
-8.816s
-8.855s
+7.191s
+7.23s
+7.199s
 ```
