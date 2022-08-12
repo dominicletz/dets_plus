@@ -587,7 +587,9 @@ defmodule DetsPlus do
 
   defp add_stats({prev, stats}, label) do
     now = :erlang.timestamp()
-    {now, [{label, div(:timer.now_diff(now, prev), 1000)} | stats]}
+    elapsed = div(:timer.now_diff(now, prev), 1000)
+    # IO.puts("#{label} #{elapsed}ms")
+    {now, [{label, elapsed} | stats]}
   end
 
   defp spawn_sync_worker(
@@ -608,8 +610,7 @@ defmodule DetsPlus do
       spawn_link(fn ->
         stats = {:erlang.timestamp(), []}
         new_dataset = :ets.tab2list(ets)
-
-        stats = add_stats(stats, :ets_flushed)
+        stats = add_stats(stats, :ets_flush)
         send(dets, :continue)
 
         # Ensuring hash function sort order
@@ -617,7 +618,7 @@ defmodule DetsPlus do
           parallel_hash(hash_fun, new_dataset)
           |> Enum.sort_by(fn {hash, _tuple} -> hash end, :asc)
 
-        stats = add_stats(stats, :ets_sorted)
+        stats = add_stats(stats, :ets_sort)
 
         old_file =
           if fp != nil do
@@ -626,23 +627,31 @@ defmodule DetsPlus do
             nil
           end
 
-        # setting the bloom size based of a size estimate
-        bloom_size = (file_entries + length(new_dataset)) * 10
-        state = bloom_create(state, bloom_size)
-
-        new_filename = "#{filename}.buffer"
+        new_filename = "#{filename}.tmp"
         @wfile.delete(new_filename)
-        opts = [page_size: 512_000, max_pages: 250]
+
+        # ~5mb for this write buffer, it's mostly append only, higher values
+        # didn't make an impact.
+        # (the only non-append workflow on this fp is the hash overflow handler, but that is usually small)
+        opts = [page_size: 512_000, max_pages: 10]
         {:ok, new_file} = @wfile.open(new_filename, opts)
         state = %State{state | fp: new_file}
         stats = add_stats(stats, :fopen)
-        state = scan_file(state, new_dataset, old_file)
-        stats = add_stats(stats, :scan_file)
+        bloom_size = (file_entries + length(new_dataset)) * 10
 
-        state =
-          bloom_finalize(state)
-          |> store_state()
+        {state, entries} =
+          encapsulate(fn ->
+            # setting the bloom size based of a size estimate
+            state = bloom_create(state, bloom_size)
+            {state, entries} = write_entries(state, new_dataset, old_file)
+            state = bloom_finalize(state)
+            {state, entries}
+          end)
 
+        stats = add_stats(stats, :write_entries)
+        state = write_hashtable(state, entries)
+        stats = add_stats(stats, :write_hashtable)
+        state = store_state(state)
         stats = add_stats(stats, :header_store)
 
         @wfile.close(new_file)
@@ -679,11 +688,21 @@ defmodule DetsPlus do
     end
   end
 
-  defp scan_file(state = %State{fp: fp, hashfun: hashfun}, new_dataset, old_file) do
+  defp write_entries(
+         state = %State{
+           fp: fp,
+           hashfun: hashfun,
+           file_entries: old_file_entries,
+           filename: filename
+         },
+         new_dataset,
+         old_file
+       ) do
     state = %State{state | file_entries: 0, slot_counts: %{}}
     writer = FileWriter.new(fp, 0, module: @wfile)
     writer = FileWriter.write(writer, "DET+")
-    entries = EntryWriter.new()
+    estimated_entry_count = length(new_dataset) + old_file_entries
+    entries = EntryWriter.new(filename, estimated_entry_count)
 
     {:done, {state, entries, writer}} =
       iterate(
@@ -715,13 +734,13 @@ defmodule DetsPlus do
       )
 
     # final zero offset after all data entries
-    writer =
-      FileWriter.write(writer, <<0::unsigned-size(@entry_size_size_bits)>>)
-      |> FileWriter.sync()
+    FileWriter.write(writer, <<0::unsigned-size(@entry_size_size_bits)>>)
+    |> FileWriter.sync()
 
-    entries = EntryWriter.sync(entries)
-    %State{slot_counts: slot_counts} = state
+    {state, entries}
+  end
 
+  defp write_hashtable(state = %State{slot_counts: slot_counts, fp: fp}, entries) do
     new_slot_counts =
       Enum.map(slot_counts, fn {key, value} ->
         {key, next_power_of_two(trunc(value * 1.3) + 1)}
@@ -730,35 +749,40 @@ defmodule DetsPlus do
 
     state =
       %State{state | slot_counts: new_slot_counts}
-      |> init_table_offsets(FileWriter.offset(writer))
+      |> init_table_offsets(@wfile.size(fp))
 
-    writer =
-      0..255
-      |> Enum.reduce(writer, fn table_idx, writer ->
-        slot_count = Map.get(new_slot_counts, table_idx, 0)
+    writer = FileWriter.new(fp, @wfile.size(fp), module: @wfile)
 
-        entries =
-          EntryWriter.lookup(entries, table_idx)
-          |> Enum.map(fn {entry_hash, offset} ->
-            {slot_idx(entry_hash, slot_count), offset}
-          end)
-          |> Enum.sort()
+    Enum.reduce(0..255, writer, fn table_idx, writer ->
+      slot_count = Map.get(new_slot_counts, table_idx, 0)
 
-        start_offset = FileWriter.offset(writer)
-        {writer, overflow} = reduce_entries(entries, writer, slot_count)
+      entries =
+        EntryWriter.lookup(entries, table_idx)
+        |> Enum.map(fn <<entry_hash::binary-size(8), offset::unsigned-size(@slot_size_bits)>> ->
+          {slot_idx(entry_hash, slot_count), offset}
+        end)
+        |> Enum.sort()
 
-        if overflow == [] do
-          writer
-        else
-          writer = FileWriter.sync(writer)
-          reduce_overflow(overflow, FileReader.new(fp, start_offset, module: @wfile), fp)
-          writer
-        end
-      end)
+      start_offset = FileWriter.offset(writer)
+      {writer, overflow} = reduce_entries(entries, writer, slot_count)
+
+      if overflow == [] do
+        writer
+      else
+        writer = FileWriter.sync(writer)
+        reduce_overflow(overflow, FileReader.new(fp, start_offset, module: @wfile), fp)
+        writer
+      end
+    end)
+    |> FileWriter.sync()
 
     EntryWriter.close(entries)
-    FileWriter.sync(writer)
     state
+  end
+
+  defp encapsulate(fun) do
+    # Task.async(fun) |> Task.await(:infinity)
+    fun.()
   end
 
   defp next_power_of_two(n), do: next_power_of_two(n, 2)

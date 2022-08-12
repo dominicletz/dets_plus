@@ -47,7 +47,6 @@ DetsPlus.insert(dets, {1, 1, 1})
 - Add `update_counter/3`
 - Add support for `bag` and `sorted_set`/`ordered_set`
 - ~~Add `traverse/2`, `foldr/3`, `first/1` ,`next/1`~~ `Enumerable` protocol is supported now. Use the `Enum.*` functions
-- Further reduce memory usage while syncing the hash tables to disk
 
 - Maybe Add `match()/select()` - no idea how to do that efficiently though?
 - Maybe allow customizing the hash function?
@@ -77,44 +76,44 @@ some measurements:
 ```bash
 $ mix run scripts/bench.exs 
 running write test: :dets
-4.357s
-4.358s
-4.261s
+4.705s
+4.335s
+4.29s
 running write test: DetsPlus
-1.403s
-1.328s
-1.358s
+1.46s
+1.385s
+1.355s
 
 running rw test: :dets
-2.896s
-2.873s
-2.958s
+2.83s
+2.862s
+2.862s
 running rw test: DetsPlus
-2.831s
-2.753s
-2.8s
+2.606s
+2.534s
+2.564s
 
 running read test: :dets
-0.946s
 1.043s
-0.941s
+0.935s
+0.887s
 running read test: DetsPlus
-2.352s
-2.349s
-2.283s
+2.104s
+2.091s
+2.07s
 
 running sync_test: 0 + 150_000 new inserts test: DetsPlus
-0.939s
-0.927s
-0.926s
+1.035s
+1.056s
+1.033s
 
 running sync_test: 0 + 1_500_000 new inserts test: DetsPlus
-11.531s
-11.776s
-11.288s
+13.195s
+13.062s
+13.217s
 
 running sync_test 1_500_000 + 1 new inserts test: DetsPlus
-9.589s
-10.039s
-9.882s
+8.917s
+8.816s
+8.855s
 ```
