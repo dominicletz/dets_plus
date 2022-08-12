@@ -740,6 +740,16 @@ defmodule DetsPlus do
     {state, entries}
   end
 
+  Enum.reduce(1..56, {[], 2}, fn bits, {code, size} ->
+    next =
+      defp slot_idx(unquote(size), <<_, slot::unsigned-size(unquote(bits)), _::bitstring()>>) do
+        slot
+      end
+
+    {[next | code], size * 2}
+  end)
+  |> elem(0)
+
   defp write_hashtable(state = %State{slot_counts: slot_counts, fp: fp}, entries) do
     new_slot_counts =
       Enum.map(slot_counts, fn {key, value} ->
@@ -759,7 +769,7 @@ defmodule DetsPlus do
       entries =
         EntryWriter.lookup(entries, table_idx)
         |> Enum.map(fn <<entry_hash::binary-size(8), offset::unsigned-size(@slot_size_bits)>> ->
-          {slot_idx(entry_hash, slot_count), offset}
+          {slot_idx(slot_count, entry_hash), offset}
         end)
         |> Enum.sort()
 
@@ -968,7 +978,7 @@ defmodule DetsPlus do
     slot_count = Map.get(slot_counts, table_idx, 0)
 
     if bloom_lookup(state, hash) and slot_count > 0 do
-      slot = slot_idx(hash, slot_count)
+      slot = slot_idx(slot_count, hash)
 
       {ret, _n} =
         file_lookup_slot_loop(state, key, table_offset(state, table_idx), slot, slot_count)
@@ -1043,21 +1053,6 @@ defmodule DetsPlus do
   # get a table idx from the hash value
   defp table_idx(<<idx, _::binary()>>) do
     idx
-  end
-
-  defp bits_of_power_of_two(2), do: 1
-  defp bits_of_power_of_two(256), do: 8
-  defp bits_of_power_of_two(65_536), do: 16
-  defp bits_of_power_of_two(16_777_216), do: 24
-  defp bits_of_power_of_two(4_294_967_296), do: 32
-  defp bits_of_power_of_two(x), do: bits_of_power_of_two(div(x, 2)) + 1
-
-  # get a slot idx from the hash value
-  defp slot_idx(<<_, rest::binary-size(7)>>, size) do
-    bits = bits_of_power_of_two(size)
-    r = 56 - bits
-    <<slot::unsigned-size(bits), _::unsigned-size(r)>> = rest
-    slot
   end
 
   defp do_string(atom) when is_atom(atom), do: Atom.to_string(atom)
