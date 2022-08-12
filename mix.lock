@@ -11,5 +11,5 @@
   "makeup_elixir": {:hex, :makeup_elixir, "0.16.0", "f8c570a0d33f8039513fbccaf7108c5d750f47d8defd44088371191b76492b0b", [:mix], [{:makeup, "~> 1.0", [hex: :makeup, repo: "hexpm", optional: false]}, {:nimble_parsec, "~> 1.2.3", [hex: :nimble_parsec, repo: "hexpm", optional: false]}], "hexpm", "28b2cbdc13960a46ae9a8858c4bebdec3c9a6d7b4b9e7f4ed1502f8159f338e7"},
   "makeup_erlang": {:hex, :makeup_erlang, "0.1.1", "3fcb7f09eb9d98dc4d208f49cc955a34218fc41ff6b84df7c75b3e6e533cc65f", [:mix], [{:makeup, "~> 1.0", [hex: :makeup, repo: "hexpm", optional: false]}], "hexpm", "174d0809e98a4ef0b3309256cbf97101c6ec01c4ab0b23e926a9e17df2077cbb"},
   "nimble_parsec": {:hex, :nimble_parsec, "1.2.3", "244836e6e3f1200c7f30cb56733fd808744eca61fd182f731eac4af635cc6d0b", [:mix], [], "hexpm", "c8d789e39b9131acf7b99291e93dae60ab48ef14a7ee9d58c6964f59efb570b0"},
-  "paged_file": {:hex, :paged_file, "1.0.3", "c1ea216470b429454a45a3bf5b9a82733a1d87eb36c474ab7cda1a1ca01fc3ed", [:mix], [], "hexpm", "de7612948c1f627b54bbc8e52eda7399fed0250c01781c85f24237a740712e20"},
+  "paged_file": {:hex, :paged_file, "1.0.4", "f95553eb84d60eb99d57203334aeb8c8c290e9e427bae3f3331f5a217390276d", [:mix], [], "hexpm", "de7fde8f17ddf9bb270b26acab0e57938156eb0a5813dd3b603115f3af45fdf0"},
 }
