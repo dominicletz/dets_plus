@@ -39,7 +39,7 @@ defmodule DetsPlus do
   use GenServer
   require Logger
 
-  defstruct [:pid, :ets]
+  defstruct [:pid, :ets, :keyfun, :keyhashfun, :hashfun]
 
   @type t :: %__MODULE__{pid: pid()}
 
@@ -233,7 +233,11 @@ defmodule DetsPlus do
   Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
   @spec insert_new(DetsPlus.t(), tuple() | [tuple()]) :: true | false
-  def insert_new(%__MODULE__{pid: pid}, tuple) do
+  def insert_new(%__MODULE__{pid: pid, hashfun: hashfun}, tuple) do
+    tuple =
+      List.wrap(tuple)
+      |> Enum.map(fn tuple -> {tuple, hashfun.(tuple)} end)
+
     case call(pid, {:insert_new, tuple}) do
       :ok -> true
       false -> false
@@ -277,8 +281,8 @@ defmodule DetsPlus do
   Notice that the order of objects returned is unspecified. In particular, the order in which objects were inserted is not reflected.
   """
   @spec lookup(DetsPlus.t(), any) :: [tuple()] | {:error, atom()}
-  def lookup(%__MODULE__{pid: pid}, key) do
-    call(pid, {:lookup, key})
+  def lookup(%__MODULE__{pid: pid, keyhashfun: keyhashfun}, key) do
+    call(pid, {:lookup, key, keyhashfun.(key)})
   end
 
   @doc """
@@ -321,7 +325,7 @@ defmodule DetsPlus do
   end
 
   @doc """
-  Returns information about table Name as a list of tuples:
+  Returns information about table Name as a list of objects:
 
   - `{file_size, integer() >= 0}}` - The file size, in bytes.
   - `{filename, file:name()}` - The name of the file where objects are stored.
@@ -359,8 +363,14 @@ defmodule DetsPlus do
   end
 
   @impl true
-  def handle_call(:get_handle, _from, state = %State{ets: ets}) do
-    {:reply, %DetsPlus{pid: self(), ets: ets}, state}
+  def handle_call(
+        :get_handle,
+        _from,
+        state = %State{ets: ets, keyfun: keyfun, keyhashfun: keyhashfun, hashfun: hashfun}
+      ) do
+    {:reply,
+     %DetsPlus{pid: self(), ets: ets, keyfun: keyfun, keyhashfun: keyhashfun, hashfun: hashfun},
+     state}
   end
 
   def handle_call(
@@ -445,36 +455,34 @@ defmodule DetsPlus do
   end
 
   def handle_call(
-        {:insert_new, tuple},
+        {:insert_new, objects},
         from,
         state = %State{ets: ets, sync_fallback: fallback, keyfun: keyfun}
       ) do
-    tuples = List.wrap(tuple)
-
     exists =
-      Enum.any?(tuples, fn tuple ->
+      Enum.any?(objects, fn {tuple, hash} ->
         key = keyfun.(tuple)
 
         Map.has_key?(fallback, key) || :ets.lookup(ets, key) != [] ||
-          file_lookup(state, key) != []
+          file_lookup(state, key, hash) != []
       end)
 
     if exists do
       {:reply, false, state}
     else
-      handle_call({:insert, tuples}, from, state)
+      handle_call({:insert, objects}, from, state)
     end
   end
 
   def handle_call(
-        {:lookup, key},
+        {:lookup, key, hash},
         _from,
         state = %State{ets: ets, sync_fallback: fallback}
       ) do
     case Map.get(fallback, key) do
       nil ->
         case :ets.lookup(ets, key) do
-          [] -> {:reply, file_lookup(state, key), state}
+          [] -> {:reply, file_lookup(state, key, hash), state}
           other -> {:reply, other, state}
         end
 
@@ -978,10 +986,9 @@ defmodule DetsPlus do
     Map.get(offsets, table_idx)
   end
 
-  defp file_lookup(%State{file_entries: 0}, _key), do: []
+  defp file_lookup(%State{file_entries: 0}, _key, _hash), do: []
 
-  defp file_lookup(state = %State{slot_counts: slot_counts, keyhashfun: keyhashfun}, key) do
-    hash = keyhashfun.(key)
+  defp file_lookup(state = %State{slot_counts: slot_counts}, key, hash) do
     table_idx = table_idx(hash)
     slot_count = Map.get(slot_counts, table_idx, 0)
 
