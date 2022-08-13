@@ -40,6 +40,7 @@ defmodule DetsPlus do
 
   @version 3
 
+  alias DetsPlus.{Bloom, EntryWriter, FileReader, FileWriter}
   use GenServer
   require Logger
 
@@ -654,9 +655,9 @@ defmodule DetsPlus do
         {state, entries} =
           encapsulate(fn ->
             # setting the bloom size based of a size estimate
-            state = bloom_create(state, bloom_size)
+            state = Bloom.create(state, bloom_size)
             {state, entries} = write_entries(state, new_dataset, old_file)
-            state = bloom_finalize(state)
+            state = Bloom.finalize(state)
             {state, entries}
           end)
 
@@ -728,7 +729,7 @@ defmodule DetsPlus do
            _ ->
           table_idx = table_idx(entry_hash)
           slot_counts = Map.update(slot_counts, table_idx, 1, fn count -> count + 1 end)
-          state = bloom_add(state, entry_hash)
+          state = Bloom.add(state, entry_hash)
           state = %State{state | file_entries: file_entries + 1, slot_counts: slot_counts}
           size = byte_size(entry)
 
@@ -955,41 +956,6 @@ defmodule DetsPlus do
     end
   end
 
-  defp bloom_create(state = %State{}, bloom_size) do
-    {:ok, ram_file} = :file.open(:binary.copy(<<0>>, bloom_size), [:ram, :read, :write, :binary])
-    %State{state | bloom_size: bloom_size, bloom: {ram_file, [], 0}}
-  end
-
-  defp bloom_add(
-         state = %State{bloom_size: bloom_size, bloom: {ram_file, keys, n}},
-         <<hash::unsigned-size(@hash_size_bits)>>
-       ) do
-    key = rem(hash, bloom_size)
-    keys = [{key, <<1>>} | keys]
-    n = n + 1
-
-    if n < 128 do
-      %State{state | bloom: {ram_file, keys, n}}
-    else
-      :ok = :file.pwrite(ram_file, keys)
-      %State{state | bloom: {ram_file, [], 0}}
-    end
-  end
-
-  defp bloom_finalize(state = %State{bloom: {ram_file, keys, _n}, bloom_size: bloom_size}) do
-    :ok = :file.pwrite(ram_file, keys)
-    {:ok, binary} = :file.pread(ram_file, 0, bloom_size)
-    :file.close(ram_file)
-    %State{state | bloom: binary}
-  end
-
-  defp bloom_lookup(
-         %State{bloom_size: bloom_size, bloom: bloom},
-         <<hash::unsigned-size(@hash_size_bits)>>
-       ) do
-    :binary.at(bloom, rem(hash, bloom_size)) == 1
-  end
-
   defp table_offset(%State{table_offsets: nil}, _table_idx) do
     nil
   end
@@ -1004,7 +970,7 @@ defmodule DetsPlus do
     table_idx = table_idx(hash)
     slot_count = Map.get(slot_counts, table_idx, 0)
 
-    if bloom_lookup(state, hash) and slot_count > 0 do
+    if Bloom.lookup(state, hash) and slot_count > 0 do
       slot = slot_idx(slot_count, hash)
 
       {ret, _n} =
@@ -1049,22 +1015,20 @@ defmodule DetsPlus do
       end)
       |> Enum.map(fn {_hash, offset} -> offset end)
 
-    if offsets != [] do
-      {:ok, sizes} =
-        PagedFile.pread(fp, Enum.zip(offsets, List.duplicate(@entry_size_size, length(offsets))))
+    {:ok, sizes} =
+      PagedFile.pread(fp, Enum.zip(offsets, List.duplicate(@entry_size_size, length(offsets))))
 
-      sizes = Enum.map(sizes, fn <<size::unsigned-size(@entry_size_size_bits)>> -> size end)
-      offsets = Enum.map(offsets, fn offset -> offset + @entry_size_size end)
-      {:ok, entries} = PagedFile.pread(fp, Enum.zip(offsets, sizes))
+    sizes = Enum.map(sizes, fn <<size::unsigned-size(@entry_size_size_bits)>> -> size end)
+    offsets = Enum.map(offsets, fn offset -> offset + @entry_size_size end)
+    {:ok, entries} = PagedFile.pread(fp, Enum.zip(offsets, sizes))
 
-      Enum.find_value(entries, fn entry ->
-        entry = :erlang.binary_to_term(entry)
+    Enum.find_value(entries, fn entry ->
+      entry = :erlang.binary_to_term(entry)
 
-        if keyfun.(entry) == key do
-          entry
-        end
-      end)
-    end
+      if keyfun.(entry) == key do
+        entry
+      end
+    end)
     |> case do
       nil ->
         if len < batch_size do
@@ -1110,6 +1074,7 @@ defmodule DetsPlus do
 end
 
 defimpl Enumerable, for: DetsPlus do
+  alias DetsPlus.FileReader
   def count(_pid), do: {:error, __MODULE__}
   def member?(_pid, _key), do: {:error, __MODULE__}
   def slice(_pid), do: {:error, __MODULE__}

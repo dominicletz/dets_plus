@@ -1,5 +1,18 @@
 defmodule DetsPlus.Bench do
   @moduledoc false
+
+  def bloom_test(module, test_size) do
+    state = %DetsPlus.State{version: 0}
+    state = module.create(state, test_size * 10)
+
+    _ =
+      Enum.reduce(0..test_size, state, fn x, state ->
+        module.add(state, <<x::unsigned-size(64)>>)
+      end)
+
+    :ok
+  end
+
   def test(module, test_size) do
     File.rm("test_file_dets_bench")
     {:ok, dets} = module.open_file(:test_file_dets_bench, [])
@@ -134,6 +147,7 @@ defmodule DetsPlus.Bench do
 
   def run() do
     # :observer.start()
+
     context = %{rounds: 3, modules: [:dets, DetsPlus], prepare: nil, test_size: 50_000}
     run(context, "write", &write_test/2)
     run(context, "rw", &test/2)
@@ -143,5 +157,8 @@ defmodule DetsPlus.Bench do
     run(%{context | test_size: 150_000}, "sync_test: 0 + 150_000 new inserts", &sync_test/3)
     run(%{context | test_size: 1_500_000}, "sync_test: 0 + 1_500_000 new inserts", &sync_test/3)
     run(%{context | prepare: nil}, "sync_test 1_500_000 + 1 new inserts", &sync_test2/2)
+
+    context = %{rounds: 3, modules: [DetsPlus.Bloom], prepare: nil, test_size: 1_500_000}
+    run(context, "bloom", &bloom_test/2)
   end
 end
