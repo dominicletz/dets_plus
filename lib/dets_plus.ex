@@ -760,15 +760,16 @@ defmodule DetsPlus do
     {state, entries}
   end
 
-  Enum.reduce(1..56, {[], 2}, fn bits, {code, size} ->
-    next =
-      defp slot_idx(unquote(size), <<_, slot::unsigned-size(unquote(bits)), _::bitstring()>>) do
-        slot
-      end
+  _ =
+    Enum.reduce(1..56, {[], 2}, fn bits, {code, size} ->
+      next =
+        defp slot_idx(unquote(size), <<_, slot::unsigned-size(unquote(bits)), _::bitstring()>>) do
+          slot
+        end
 
-    {[next | code], size * 2}
-  end)
-  |> elem(0)
+      {[next | code], size * 2}
+    end)
+    |> elem(0)
 
   defp write_hashtable(state = %State{slot_counts: slot_counts, fp: fp}, entries) do
     new_slot_counts =
