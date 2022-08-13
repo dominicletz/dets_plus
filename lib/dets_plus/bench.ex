@@ -72,7 +72,7 @@ defmodule DetsPlus.Bench do
   end
 
   def prepare_sync_test(module, test_size) do
-    filename = 'test_file_dets_write_bench.#{module}'
+    filename = 'test_file_dets_sync_bench.#{module}'
     File.rm(filename)
     {:ok, dets} = module.open_file(:test_file_dets_bench, file: filename, auto_save: :never)
 
@@ -90,7 +90,7 @@ defmodule DetsPlus.Bench do
   end
 
   def sync_test2(module, _test_size) do
-    filename = 'test_file_dets_write_bench.#{module}'
+    filename = 'test_file_dets_sync_bench.#{module}'
     {:ok, dets} = module.open_file(:test_file_dets_bench, file: filename, auto_save: :never)
     module.insert(dets, {1, 1})
     :ok = module.sync(dets)

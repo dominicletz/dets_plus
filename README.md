@@ -73,47 +73,46 @@ The docs can be found at [https://hexdocs.pm/dets_plus](https://hexdocs.pm/dets_
 As mentioned above reading `DetsPlus` is slower than `:dets` because `DetsPlus` is reading from disk primarily. Here 
 some measurements:
 
-```bash
-$ mix run scripts/bench.exs 
+```
 running write test: :dets
-4.325s
-4.341s
-4.244s
+4.364s
+4.376s
+4.238s
 running write test: DetsPlus
-1.291s
-1.282s
-1.294s
+1.378s
+1.394s
+1.322s
 
 running rw test: :dets
-3.261s
-2.823s
-2.818s
+2.903s
+3.171s
+3.293s
 running rw test: DetsPlus
-2.576s
-2.534s
-2.508s
+2.113s
+2.073s
+2.124s
 
 running read test: :dets
-0.881s
-0.922s
-0.964s
+1.387s
+0.942s
+1.218s
 running read test: DetsPlus
-2.098s
-2.169s
-2.111s
+1.543s
+1.592s
+1.612s
 
 running sync_test: 0 + 150_000 new inserts test: DetsPlus
-1.011s
-1.003s
-1.033s
+1.042s
+1.041s
+1.062s
 
 running sync_test: 0 + 1_500_000 new inserts test: DetsPlus
-12.223s
-12.327s
-12.477s
+12.612s
+12.411s
+12.553s
 
 running sync_test 1_500_000 + 1 new inserts test: DetsPlus
-7.191s
-7.23s
-7.199s
+7.367s
+7.253s
+7.218s
 ```

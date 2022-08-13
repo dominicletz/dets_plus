@@ -34,6 +34,10 @@ defmodule DetsPlus do
   @hash_size 8
   @hash_size_bits @hash_size * 8
 
+  # Tuples for use in the hash tables
+  @null_tuple {<<0::unsigned-size(64)>>, 0}
+  @null_binary <<0::unsigned-size(128)>>
+
   @version 3
 
   use GenServer
@@ -196,7 +200,7 @@ defmodule DetsPlus do
       Enum.reduce(1..256, %{0 => start_offset}, fn table_idx, table_offsets ->
         offset =
           Map.get(table_offsets, table_idx - 1) +
-            Map.get(slot_counts, table_idx - 1, 0) * @slot_size
+            Map.get(slot_counts, table_idx - 1, 0) * (@slot_size + @hash_size)
 
         Map.put(table_offsets, table_idx, offset)
       end)
@@ -783,9 +787,6 @@ defmodule DetsPlus do
 
       entries =
         EntryWriter.lookup(entries, table_idx)
-        |> Enum.map(fn <<entry_hash::binary-size(8), offset::unsigned-size(@slot_size_bits)>> ->
-          {slot_idx(slot_count, entry_hash), offset}
-        end)
         |> Enum.sort()
 
       start_offset = FileWriter.offset(writer)
@@ -822,38 +823,49 @@ defmodule DetsPlus do
        do: {writer, overflow}
 
   defp reduce_entries([], writer, slot_count, last_slot, overflow) do
-    writer = FileWriter.write(writer, <<0::unsigned-size(@slot_size_bits)>>)
+    writer = FileWriter.write(writer, @null_binary)
     reduce_entries([], writer, slot_count, last_slot + 1, overflow)
   end
 
-  defp reduce_entries([{slot_idx, value} | entries], writer, slot_count, last_slot, overflow) do
+  defp reduce_entries(
+         [
+           <<entry_hash::binary-size(8), _offset::unsigned-size(@slot_size_bits)>> = entry
+           | entries
+         ],
+         writer,
+         slot_count,
+         last_slot,
+         overflow
+       ) do
+    slot_idx = slot_idx(slot_count, entry_hash)
+
     cond do
       last_slot + 1 == slot_count ->
-        reduce_entries(entries, writer, slot_count, last_slot, [value | overflow])
+        reduce_entries(entries, writer, slot_count, last_slot, [entry | overflow])
 
       last_slot + 1 >= slot_idx ->
-        writer = FileWriter.write(writer, <<value::unsigned-size(@slot_size_bits)>>)
+        writer = FileWriter.write(writer, entry)
         reduce_entries(entries, writer, slot_count, last_slot + 1, overflow)
 
       true ->
-        writer = FileWriter.write(writer, <<0::unsigned-size(@slot_size_bits)>>)
-        reduce_entries([{slot_idx, value} | entries], writer, slot_count, last_slot + 1, overflow)
+        writer = FileWriter.write(writer, @null_binary)
+        reduce_entries([entry | entries], writer, slot_count, last_slot + 1, overflow)
     end
   end
 
   defp reduce_overflow([], _reader, _fp), do: :ok
 
-  defp reduce_overflow([value | overflow], reader, fp) do
+  defp reduce_overflow([entry | overflow], reader, fp) do
     curr = FileReader.offset(reader)
-    {reader, next} = FileReader.read(reader, @slot_size)
+    {reader, next} = FileReader.read(reader, @slot_size + @hash_size)
 
     case next do
-      <<0::unsigned-size(@slot_size_bits)>> ->
-        @wfile.pwrite(fp, curr, <<value::unsigned-size(@slot_size_bits)>>)
+      @null_binary ->
+        @wfile.pwrite(fp, curr, entry)
         reduce_overflow(overflow, reader, fp)
 
       _ ->
-        reduce_overflow([value | overflow], reader, fp)
+        reduce_overflow([entry | overflow], reader, fp)
     end
   end
 
@@ -982,8 +994,8 @@ defmodule DetsPlus do
     nil
   end
 
-  defp table_offset(%State{table_offsets: offsets}, table_idx) do
-    Map.get(offsets, table_idx)
+  defp table_offset(%State{table_offsets: table_offsets}, table_idx) do
+    Map.get(table_offsets, table_idx)
   end
 
   defp file_lookup(%State{file_entries: 0}, _key, _hash), do: []
@@ -996,7 +1008,7 @@ defmodule DetsPlus do
       slot = slot_idx(slot_count, hash)
 
       {ret, _n} =
-        file_lookup_slot_loop(state, key, table_offset(state, table_idx), slot, slot_count)
+        file_lookup_slot_loop(state, key, hash, table_offset(state, table_idx), slot, slot_count)
 
       ret
     else
@@ -1005,35 +1017,43 @@ defmodule DetsPlus do
   end
 
   defp batch_read(fp, point, count) do
-    {:ok, data} = PagedFile.pread(fp, point, @slot_size * count)
-    data = data <> :binary.copy(<<0>>, @slot_size * count - byte_size(data))
-    for <<offset::unsigned-size(@slot_size_bits) <- data>>, do: offset
+    {:ok, data} = PagedFile.pread(fp, point, (@slot_size + @hash_size) * count)
+
+    for <<hash::binary-size(@hash_size), offset::unsigned-size(@slot_size_bits) <- data>> do
+      {hash, offset}
+    end ++ [@null_tuple]
   end
 
   @batch_size 32
   defp file_lookup_slot_loop(
          state = %State{fp: fp, keyfun: keyfun},
          key,
+         hash,
          base_offset,
          slot,
          slot_count,
          n \\ 0
        ) do
     slot = rem(slot, slot_count)
-    point = base_offset + slot * @slot_size
+    point = base_offset + slot * (@slot_size + @hash_size)
     batch_size = min(@batch_size, slot_count - slot)
-    offsets = batch_read(fp, point, batch_size)
+    hash_offsets = batch_read(fp, point, batch_size)
 
-    if hd(offsets) == 0 do
-      {[], n}
-    else
-      # a zero is an indication of the end
-      offsets = Enum.take_while(offsets, fn x -> x != 0 end)
-      len = length(offsets)
+    # a zero is an indication of the end
+    hash_offsets = Enum.take_while(hash_offsets, fn x -> x != @null_tuple end)
+    len = length(hash_offsets)
 
-      {:ok, sizes} = PagedFile.pread(fp, Enum.zip(offsets, List.duplicate(@entry_size_size, len)))
+    offsets =
+      Enum.filter(hash_offsets, fn {rhash, _offset} ->
+        rhash == hash
+      end)
+      |> Enum.map(fn {_hash, offset} -> offset end)
+
+    if offsets != [] do
+      {:ok, sizes} =
+        PagedFile.pread(fp, Enum.zip(offsets, List.duplicate(@entry_size_size, length(offsets))))
+
       sizes = Enum.map(sizes, fn <<size::unsigned-size(@entry_size_size_bits)>> -> size end)
-
       offsets = Enum.map(offsets, fn offset -> offset + @entry_size_size end)
       {:ok, entries} = PagedFile.pread(fp, Enum.zip(offsets, sizes))
 
@@ -1044,17 +1064,25 @@ defmodule DetsPlus do
           entry
         end
       end)
-      |> case do
-        nil ->
-          if len < batch_size do
-            {[], n}
-          else
-            file_lookup_slot_loop(state, key, base_offset, slot + batch_size, slot_count, n + 1)
-          end
+    end
+    |> case do
+      nil ->
+        if len < batch_size do
+          {[], n}
+        else
+          file_lookup_slot_loop(
+            state,
+            key,
+            hash,
+            base_offset,
+            slot + batch_size,
+            slot_count,
+            n + 1
+          )
+        end
 
-        entry ->
-          {[entry], n}
-      end
+      entry ->
+        {[entry], n}
     end
   end
 
