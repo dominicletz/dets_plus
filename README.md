@@ -125,7 +125,7 @@ relatively low memory usage when creating the file in a single pass.
 1) The header has been moved to the end of the file, to allow for a header who's size is not known before writing the data entries. The header is an encoded & compressed Erlang term - for fast retrieval in Elixir.
 
 2) There is an additional storage overhead (compared to CDB) for storing the 64bit (8 bytes) hashes of all entries  twice in the file. This accelerates lookups and database updates but costs storage. 
-For 1_000_000 entries this means an additional storage of 32MB.
+For 1_000_000 entries this means an additional storage of 16MB.
 
 3) The header includes bloom filter with the size of `(10/8)*entry_count` bytes. Again for 1_000_000 entries this means an additional storage and memory overhead (compared to CDB) of 1.25MB
 
