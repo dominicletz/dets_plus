@@ -146,9 +146,11 @@ defmodule DetsPlus.Test do
 
       # Test run 2 with a  pre-existing file
       DetsPlus.insert(dets, {1})
+      assert Enum.to_list(dets) == [{1}]
       DetsPlus.close(dets)
 
       {:ok, dets} = DetsPlus.open_file(:test_file5)
+      assert Enum.to_list(dets) == [{1}]
 
       for x <- 1..1000 do
         DetsPlus.insert(dets, {x})
@@ -160,6 +162,14 @@ defmodule DetsPlus.Test do
       assert DetsPlus.count(dets) == 0
       assert DetsPlus.lookup(dets, 1) == []
       assert Enum.to_list(dets) == []
+    end
+
+    test "map storage" do
+      File.rm("test_file6")
+      {:ok, dets} = DetsPlus.open_file(:test_file6, keypos: :id)
+      DetsPlus.insert(dets, %{id: 1, value: 42})
+      [%{id: 1, value: 42}] = DetsPlus.lookup(dets, 1)
+      :ok = DetsPlus.close(dets)
     end
   end
 end

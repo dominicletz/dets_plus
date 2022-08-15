@@ -133,12 +133,21 @@ defmodule DetsPlus do
     end
   end
 
-  defp init_hashfuns(state = %State{keypos: keypos}) do
+  defp init_hashfuns(state = %State{keypos: keypos}) when is_integer(keypos) do
     %State{
       state
       | keyfun: fn tuple -> elem(tuple, keypos - 1) end,
         keyhashfun: &default_hash/1,
         hashfun: fn tuple -> default_hash(elem(tuple, keypos - 1)) end
+    }
+  end
+
+  defp init_hashfuns(state = %State{keypos: keypos}) when is_atom(keypos) do
+    %State{
+      state
+      | keyfun: fn map -> Map.get(map, keypos) end,
+        keyhashfun: &default_hash/1,
+        hashfun: fn map -> default_hash(Map.get(map, keypos)) end
     }
   end
 
@@ -192,8 +201,8 @@ defmodule DetsPlus do
     {:ok, init_ets(state)}
   end
 
-  defp init_ets(state = %State{name: name, type: type, keypos: keypos}) do
-    %State{state | ets: :ets.new(name, [type, {:keypos, keypos}])}
+  defp init_ets(state = %State{name: name, type: type}) do
+    %State{state | ets: :ets.new(name, [type])}
   end
 
   defp init_table_offsets(state = %State{slot_counts: slot_counts}, start_offset) do
@@ -229,15 +238,15 @@ defmodule DetsPlus do
   @doc """
     Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
-  @spec insert(DetsPlus.t(), tuple() | [tuple()]) :: :ok | {:error, atom()}
-  def insert(%__MODULE__{pid: pid}, tuple) do
-    call(pid, {:insert, tuple})
+  @spec insert(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: :ok | {:error, atom()}
+  def insert(%__MODULE__{pid: pid}, objects) do
+    call(pid, {:insert, List.wrap(objects)})
   end
 
   @doc """
   Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
-  @spec insert_new(DetsPlus.t(), tuple() | [tuple()]) :: true | false
+  @spec insert_new(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: true | false
   def insert_new(%__MODULE__{pid: pid, hashfun: hashfun}, tuple) do
     tuple =
       List.wrap(tuple)
@@ -285,7 +294,7 @@ defmodule DetsPlus do
 
   Notice that the order of objects returned is unspecified. In particular, the order in which objects were inserted is not reflected.
   """
-  @spec lookup(DetsPlus.t(), any) :: [tuple()] | {:error, atom()}
+  @spec lookup(DetsPlus.t(), any) :: [tuple() | map()] | {:error, atom()}
   def lookup(%__MODULE__{pid: pid, keyhashfun: keyhashfun}, key) do
     call(pid, {:lookup, key, keyhashfun.(key)})
   end
@@ -420,12 +429,12 @@ defmodule DetsPlus do
         _from,
         state = %State{sync_fallback: fallback, filename: filename, hashfun: hash_fun}
       ) do
-    new_data2 = Map.values(fallback)
+    new_data2 = Map.to_list(fallback)
     {:reply, {new_data2, filename, hash_fun}, state}
   end
 
   def handle_call(
-        {:insert, tuple},
+        {:insert, objects},
         from,
         state = %State{
           ets: ets,
@@ -436,13 +445,12 @@ defmodule DetsPlus do
         }
       ) do
     if sync == nil do
-      :ets.insert(ets, tuple)
+      :ets.insert(ets, Enum.map(objects, fn object -> {keyfun.(object), object} end))
       {:reply, :ok, check_auto_save(state)}
     else
       fallback =
-        List.wrap(tuple)
-        |> Enum.reduce(fallback, fn tuple, fallback ->
-          Map.put(fallback, keyfun.(tuple), tuple)
+        Enum.reduce(objects, fallback, fn object, fallback ->
+          Map.put(fallback, keyfun.(object), objects)
         end)
 
       if map_size(fallback) > 1_000_000 do
@@ -488,7 +496,7 @@ defmodule DetsPlus do
       nil ->
         case :ets.lookup(ets, key) do
           [] -> {:reply, file_lookup(state, key, hash), state}
-          other -> {:reply, other, state}
+          [{^key, object}] -> {:reply, [object], state}
         end
 
       value ->
@@ -568,7 +576,7 @@ defmodule DetsPlus do
     fp = file_open(filename)
 
     :ets.delete_all_objects(ets)
-    :ets.insert(ets, Map.values(fallback))
+    :ets.insert(ets, Map.to_list(fallback))
 
     for w <- waiters do
       :ok = GenServer.reply(w, :ok)
@@ -695,8 +703,8 @@ defmodule DetsPlus do
       result = parallel_hash(hashfun, b, tasks * 2)
       Task.await(task, :infinity) ++ result
     else
-      Enum.map(new_dataset, fn tuple ->
-        {hashfun.(tuple), tuple}
+      Enum.map(new_dataset, fn {_key, object} ->
+        {hashfun.(object), object}
       end)
     end
   end

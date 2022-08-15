@@ -27,12 +27,16 @@ Limits are:
 ## Notes
 
 - `:dets` is limited to 2gb of data `DetsPlus` has no such limit.
+- `DetsPlus` supports the `Enumerable` protocol. So you can call `Enum.reduce()` on it.
+- `DetsPlus` supports Maps and Structs in addition to tuples.
 - `DetsPlus` is SLOWER in reading than `:dets` because it goes to disk for that. 
 - Only type = `:set` is supported
 
 The `:dets` limitation of 2gb caused me to create this library. I needed to store and lookup key-value pairs from sets larger than what fits into memory. Thus the current implementation did not try to be equivalent to `:dets` nor to be complete. Instead it's focused on storing large amounts of values and have fast lookups. PRs to make it more complete and use it for other things are welcome. 
 
 ## Basic usage
+
+With tuples:
 
 ```elixir
 {:ok, dets} = DetsPlus.open_file(:example)
@@ -41,12 +45,20 @@ DetsPlus.insert(dets, {1, 1, 1})
 :ok =  DetsPlus.close(dets)
 ```
 
+With maps/structs:
+
+```elixir
+{:ok, dets} = DetsPlus.open_file(:example, keypos: :id)
+DetsPlus.insert(dets, %{id: 1, value: 42})
+[{%id: 1, value: 42}] = DetsPlus.lookup(dets, 1)
+:ok =  DetsPlus.close(dets)
+```
+
 ## Ideas for PRs and future improvements
 
 - Add the `delete_object/2` function
 - Add `update_counter/3`
 - Add support for `bag` and `sorted_set`/`ordered_set`
-- ~~Add `traverse/2`, `foldr/3`, `first/1` ,`next/1`~~ `Enumerable` protocol is supported now. Use the `Enum.*` functions
 - Maybe Add `match()/select()` - no idea how to do that efficiently though?
 
 ## Installation
