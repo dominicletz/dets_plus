@@ -47,12 +47,7 @@ DetsPlus.insert(dets, {1, 1, 1})
 - Add `update_counter/3`
 - Add support for `bag` and `sorted_set`/`ordered_set`
 - ~~Add `traverse/2`, `foldr/3`, `first/1` ,`next/1`~~ `Enumerable` protocol is supported now. Use the `Enum.*` functions
-
 - Maybe Add `match()/select()` - no idea how to do that efficiently though?
-- Maybe allow customizing the hash function?
-- Maybe allow customizing bloom filter size / usage?
-- Maybe use bits for smaller bloom filter?
-- Maybe adaptively choose @slot_size and @entry_size based on biggest entry and total number of entries for smaller file 
 
 ## Installation
 
