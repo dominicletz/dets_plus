@@ -798,7 +798,13 @@ defmodule DetsPlus do
         writer
       else
         writer = FileWriter.sync(writer)
-        reduce_overflow(overflow, FileReader.new(fp, start_offset, module: @wfile), fp)
+
+        reduce_overflow(
+          Enum.reverse(overflow),
+          FileReader.new(fp, start_offset, module: @wfile),
+          fp
+        )
+
         writer
       end
     end)
@@ -1006,8 +1012,14 @@ defmodule DetsPlus do
     batch_size = min(@batch_size, slot_count - slot)
     hash_offsets = batch_read(fp, point, batch_size)
 
-    # a zero is an indication of the end
-    hash_offsets = Enum.take_while(hash_offsets, fn x -> x != @null_tuple end)
+    # a zero offset is an indication of the end
+    # a hash bigger than the searched hash means
+    # we reached the next entry or and overflow entry
+    hash_offsets =
+      Enum.take_while(hash_offsets, fn {<<khash::binary-size(@hash_size)>>, offset} ->
+        offset != 0 and khash <= hash
+      end)
+
     len = length(hash_offsets)
 
     offsets =

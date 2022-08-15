@@ -75,44 +75,84 @@ some measurements:
 
 ```
 running write test: :dets
-4.364s
-4.376s
-4.238s
+4.563s
+4.465s
+4.466s
 running write test: DetsPlus
+1.436s
 1.378s
-1.394s
-1.322s
+1.381s
 
 running rw test: :dets
-2.903s
-3.171s
-3.293s
+2.902s
+3.046s
+2.802s
 running rw test: DetsPlus
-2.113s
-2.073s
-2.124s
+2.175s
+2.173s
+2.164s
 
 running read test: :dets
-1.387s
-0.942s
-1.218s
+1.35s
+0.946s
+0.94s
 running read test: DetsPlus
-1.543s
-1.592s
-1.612s
+1.644s
+1.645s
+1.616s
 
 running sync_test: 0 + 150_000 new inserts test: DetsPlus
-1.042s
-1.041s
-1.062s
+0.908s
+0.909s
+0.927s
 
 running sync_test: 0 + 1_500_000 new inserts test: DetsPlus
-12.612s
-12.411s
-12.553s
+10.506s
+10.477s
+10.876s
 
 running sync_test 1_500_000 + 1 new inserts test: DetsPlus
-7.367s
-7.253s
-7.218s
+8.813s
+8.832s
+8.875s
+
+running bloom test: DetsPlus.Bloom
+0.265s
+0.291s
+0.271s
+```
+
+## File Structure
+ 
+The data format has been inspired by DJ Bernsteins CDB database format, but with changes to allow
+relatively low memory usage when creating the file in a single pass. 
+
+1) The header has been moved to the end of the file, to allow for a header who's size is not known before writing the data entries. The header is an encoded & compressed Erlang term - for fast retrieval in Elixir.
+
+2) There is an additional storage overhead (compared to CDB) for storing the 64bit (8 bytes) hashes of all entries  twice in the file. This accelerates lookups and database updates but costs storage. 
+For 1_000_000 entries this means an additional storage of 32MB.
+
+3) The header includes bloom filter with the size of `(10/8)*entry_count` bytes. Again for 1_000_000 entries this means an additional storage and memory overhead (compared to CDB) of 1.25MB
+
+4) Hash tables are sized in powers of two, and their sizes are stored in the compressed header (not before each table as in CDB). This means an additional storage overhead for empty hash table slots (compared to CDB) but faster read times. Also it allows to pick hash table slots in a way so they are in the same sort order the base hash itself. 
+
+File Layout Overview:
+```
+<4 byte file id "DET+"> 
+<all entries>
+<256 hash tables>
+<compressed header>
+```
+
+Detailed Layout:
+```
+<4 byte file id "DET+">
+for x <- all_entries
+  <8 byte entry_hash> <4 byte entry_size> <entry_blob (from term_to_binary())>
+
+for table <- 0..255
+  <8 byte entry_hash> <8 entry_offset>
+
+<%DetsPlus.State{} from term_to_binary()>
+<8 offset to %DetsPlus.State{}.
 ```
