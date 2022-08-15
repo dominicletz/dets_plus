@@ -156,3 +156,5 @@ for table <- 0..255
 <%DetsPlus.State{} from term_to_binary()>
 <8 offset to %DetsPlus.State{}.
 ```
+
+Because the header is at the very end of the file opening a file starts by reading the header offset from the last 8 bytes of the file. Then the header contains all additional required metadata and offsets to read entries and hash tables.  
