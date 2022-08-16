@@ -64,9 +64,8 @@ defmodule DetsPlus.EntryWriter do
         items_count < items_count_limit ->
           %Table{table | items: [item | items], items_count: items_count + 1}
 
-        writer_count < writer_count_limit ->
+        writer_count + items_count < writer_count_limit ->
           items = [item | items]
-          {items, rest} = Enum.split(items, writer_count_limit - writer_count)
           bin = :erlang.iolist_to_binary(items)
           PagedFile.pwrite(fp, writer_offset, bin)
 
@@ -74,8 +73,8 @@ defmodule DetsPlus.EntryWriter do
             table
             | writer_offset: writer_offset + byte_size(bin),
               writer_count: writer_count + length(items),
-              items: rest,
-              items_count: length(rest)
+              items: [],
+              items_count: 0
           }
 
         true ->
