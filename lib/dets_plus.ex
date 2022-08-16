@@ -176,17 +176,14 @@ defmodule DetsPlus do
     offset = @wfile.size(fp)
 
     bin =
-      :erlang.term_to_binary(
-        %State{
-          state
-          | version: @version,
-            fp: nil,
-            sync: nil,
-            sync_waiters: [],
-            ets: nil
-        },
-        [:compressed]
-      )
+      :erlang.term_to_binary(%State{
+        state
+        | version: @version,
+          fp: nil,
+          sync: nil,
+          sync_waiters: [],
+          ets: nil
+      })
 
     @wfile.pwrite(fp, offset, bin <> <<offset::unsigned-size(@slot_size_bits)>>)
     %State{state | file_size: @wfile.size(fp)}
@@ -380,12 +377,24 @@ defmodule DetsPlus do
   Returns the information associated with `item` for the table. The following items are allowed:
 
   - `{file_size, integer() >= 0}}` - The file size, in bytes.
+  - `{bloom_bytes, integer() >= 0}}` - The size of the in-memory and on-disk bloom filter, in bytes.
+  - `{hashtable_bytes, integer() >= 0}}` - The size of the on-disk lookup hashtable, in bytes.
   - `{filename, file:name()}` - The name of the file where objects are stored.
   - `{keypos, keypos()}` - The key position.
   - `{size, integer() >= 0}` - The number of objects estimated in the table.
   - `{type, type()}` - The table type.
   """
-  @spec info(DetsPlus.t(), :file_size | :filename | :keypos | :size | :type | :creation_stats) ::
+  @spec info(
+          DetsPlus.t(),
+          :file_size
+          | :filename
+          | :keypos
+          | :size
+          | :type
+          | :creation_stats
+          | :bloom_bytes
+          | :hashtable_bytes
+        ) ::
           any()
   def info(dets, item)
       when item == :file_size or item == :filename or item == :keypos or item == :size or
@@ -532,19 +541,24 @@ defmodule DetsPlus do
         :info,
         _from,
         state = %State{
+          bloom: bloom,
           filename: filename,
           keypos: keypos,
           type: type,
           ets: ets,
           file_size: file_size,
           file_entries: file_entries,
-          creation_stats: creation_stats
+          creation_stats: creation_stats,
+          slot_counts: slot_counts
         }
       ) do
     size = :ets.info(ets, :size) + file_entries
+    table_size = Enum.sum(Map.values(slot_counts)) * @slot_size + @hash_size
 
     info = [
       file_size: file_size,
+      bloom_bytes: byte_size(bloom),
+      hashtable_bytes: table_size,
       filename: filename,
       keypos: keypos,
       size: size,
