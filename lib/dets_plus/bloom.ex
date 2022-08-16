@@ -18,7 +18,7 @@ defmodule DetsPlus.Bloom do
   end
 
   def finalize(state = %State{bloom: ref}) do
-    binary = GenServer.call(ref, :finalize)
+    binary = GenServer.call(ref, :finalize, :infinity)
     GenServer.stop(ref)
     %State{state | bloom: binary}
   end

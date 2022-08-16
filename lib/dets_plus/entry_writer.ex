@@ -4,6 +4,7 @@ defmodule DetsPlus.EntryWriter do
   """
   alias DetsPlus.{EntryWriter, FileReader}
   defstruct [:map, :fp, :filename]
+  use GenServer
 
   defmodule Table do
     @moduledoc false
@@ -124,29 +125,58 @@ defmodule DetsPlus.EntryWriter do
         })
       end)
 
-    %EntryWriter{map: map, fp: temp_fp, filename: filename}
+    state = %EntryWriter{map: map, fp: temp_fp, filename: filename}
+    {:ok, pid} = GenServer.start_link(__MODULE__, state)
+    pid
   end
 
-  def insert(state = %EntryWriter{map: map}, {table_idx, hash, offset}) do
+  def insert(ew, entry) do
+    GenServer.cast(ew, {:insert, entry})
+    ew
+  end
+
+  def lookup(ew, table_idx) do
+    GenServer.call(ew, {:get_table, table_idx})
+    |> Table.get()
+  end
+
+  def info(ew) do
+    GenServer.call(ew, :info, :infinity)
+  end
+
+  def close(ew) do
+    GenServer.call(ew, :close, :infinity)
+    GenServer.stop(ew)
+  end
+
+  @impl true
+  def init(state) do
+    {:ok, state}
+  end
+
+  @impl true
+  def handle_cast({:insert, {table_idx, hash, offset}}, state = %EntryWriter{map: map}) do
     map =
       Map.update!(map, table_idx, fn table ->
         Table.insert(table, <<hash::binary-size(8), offset::unsigned-size(64)>>)
       end)
 
-    %EntryWriter{state | map: map}
+    {:noreply, %EntryWriter{state | map: map}}
   end
 
-  def lookup(%EntryWriter{map: map}, table_idx) do
-    Table.get(Map.get(map, table_idx, []))
+  @impl true
+  def handle_call({:get_table, table_idx}, _from, state = %EntryWriter{map: map}) do
+    {:reply, Map.get(map, table_idx, []), state}
   end
 
-  def info(%EntryWriter{map: map}) do
-    Enum.map(map, fn {idx, table} -> {idx, Table.info(table)} end)
+  def handle_call(:info, _from, state = %EntryWriter{map: map}) do
+    ret = Enum.map(map, fn {idx, table} -> {idx, Table.info(table)} end)
+    {:reply, ret, state}
   end
 
-  def close(state = %EntryWriter{fp: fp, filename: filename}) do
+  def handle_call(:close, _from, state = %EntryWriter{fp: fp, filename: filename}) do
     PagedFile.close(fp)
     PagedFile.delete(filename)
-    state
+    {:reply, :ok, state}
   end
 end
