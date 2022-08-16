@@ -2,12 +2,11 @@ defmodule DetsPlus.Bench do
   @moduledoc false
 
   def bloom_test(module, test_size) do
-    state = %DetsPlus.State{version: 0}
-    state = module.create(state, test_size * 10)
+    bloom = module.create(test_size * 10)
 
     _ =
-      Enum.reduce(0..test_size, state, fn x, state ->
-        module.add(state, <<x::unsigned-size(64)>>)
+      Enum.reduce(0..test_size, bloom, fn x, bloom ->
+        module.add(bloom, <<x::unsigned-size(64)>>)
       end)
 
     :ok

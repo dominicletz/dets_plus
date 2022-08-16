@@ -224,7 +224,7 @@ defmodule DetsPlus do
   @spec close(DetsPlus.t()) :: :ok
   def close(%__MODULE__{pid: pid}), do: close(pid)
 
-  def close(pid) when is_pid(pid) do
+  def close(pid) when is_pid(pid) or is_atom(pid) do
     call(pid, :sync)
     GenServer.stop(pid)
   end
@@ -235,7 +235,7 @@ defmodule DetsPlus do
   @spec delete_all_objects(DetsPlus.t()) :: :ok | {:error, atom()}
   def delete_all_objects(%__MODULE__{pid: pid}), do: delete_all_objects(pid)
 
-  def delete_all_objects(pid) when is_pid(pid) do
+  def delete_all_objects(pid) when is_pid(pid) or is_atom(pid) do
     call(pid, :delete_all_objects)
   end
 
@@ -253,7 +253,7 @@ defmodule DetsPlus do
   Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
   @spec insert_new(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: true | false
-  def insert_new(pid, tuple) when is_pid(pid) do
+  def insert_new(pid, tuple) when is_pid(pid) or is_atom(pid) do
     call(pid, :get_handle)
     |> insert_new(tuple)
   end
@@ -273,7 +273,7 @@ defmodule DetsPlus do
   Returns the number of object in the table. This is an estimate and the same as `info(dets, :size)`.
   """
   @spec count(DetsPlus.t()) :: integer()
-  def count(pid) when is_pid(pid), do: count(call(pid, :get_handle))
+  def count(pid) when is_pid(pid) or is_atom(pid), do: count(call(pid, :get_handle))
 
   def count(dets = %__MODULE__{}) do
     info(dets, :size)
@@ -283,7 +283,8 @@ defmodule DetsPlus do
   Reducer function following the `Enum` protocol.
   """
   @spec reduce(DetsPlus.t(), any(), fun()) :: any()
-  def reduce(pid, acc, fun) when is_pid(pid), do: reduce(call(pid, :get_handle), acc, fun)
+  def reduce(pid, acc, fun) when is_pid(pid) or is_atom(pid),
+    do: reduce(call(pid, :get_handle), acc, fun)
 
   def reduce(dets = %__MODULE__{}, acc, fun) do
     Enum.reduce(dets, acc, fun)
@@ -310,7 +311,7 @@ defmodule DetsPlus do
   Notice that the order of objects returned is unspecified. In particular, the order in which objects were inserted is not reflected.
   """
   @spec lookup(DetsPlus.t(), any) :: [tuple() | map()] | {:error, atom()}
-  def lookup(pid, key) when is_pid(pid), do: lookup(call(pid, :get_handle), key)
+  def lookup(pid, key) when is_pid(pid) or is_atom(pid), do: lookup(call(pid, :get_handle), key)
 
   def lookup(%__MODULE__{pid: pid, keyhashfun: keyhashfun}, key) do
     call(pid, {:lookup, key, keyhashfun.(key)})
@@ -345,7 +346,7 @@ defmodule DetsPlus do
   @spec sync(DetsPlus.t()) :: :ok
   def sync(%__MODULE__{pid: pid}), do: sync(pid)
 
-  def sync(pid) when is_pid(pid) do
+  def sync(pid) when is_pid(pid) or is_atom(pid) do
     call(pid, :sync, :infinity)
   end
 
@@ -355,7 +356,7 @@ defmodule DetsPlus do
   @spec start_sync(DetsPlus.t()) :: :ok
   def start_sync(%__MODULE__{pid: pid}), do: start_sync(pid)
 
-  def start_sync(pid) when is_pid(pid) do
+  def start_sync(pid) when is_pid(pid) or is_atom(pid) do
     call(pid, :start_sync, :infinity)
   end
 
@@ -371,7 +372,7 @@ defmodule DetsPlus do
   @spec info(DetsPlus.t()) :: [] | nil
   def info(%__MODULE__{pid: pid}), do: info(pid)
 
-  def info(pid) when is_pid(pid) do
+  def info(pid) when is_pid(pid) or is_atom(pid) do
     call(pid, :info)
   end
 
@@ -686,9 +687,16 @@ defmodule DetsPlus do
         {state, entries} =
           encapsulate(fn ->
             # setting the bloom size based of a size estimate
-            state = Bloom.create(state, bloom_size)
-            {state, entries} = write_entries(state, new_dataset, old_file)
-            state = Bloom.finalize(state)
+            future_bloom =
+              Task.async(fn ->
+                bloom = Bloom.create(bloom_size)
+                write_bloom(state, bloom, new_dataset, old_file)
+              end)
+
+            future_entries = Task.async(fn -> write_entries(state, new_dataset, old_file) end)
+            state = write_data(state, new_dataset, old_file)
+            state = Bloom.finalize(state, Task.await(future_bloom, :infinity))
+            entries = Task.await(future_entries, :infinity)
             {state, entries}
           end)
 
@@ -733,8 +741,7 @@ defmodule DetsPlus do
   end
 
   defp write_entries(
-         state = %State{
-           fp: fp,
+         %State{
            hashfun: hashfun,
            file_entries: old_file_entries,
            filename: filename
@@ -742,33 +749,79 @@ defmodule DetsPlus do
          new_dataset,
          old_file
        ) do
-    state = %State{state | file_entries: 0, slot_counts: %{}}
-    writer = FileWriter.new(fp, 0, module: @wfile)
-    writer = FileWriter.write(writer, "DET+")
     estimated_entry_count = length(new_dataset) + old_file_entries
     entries = EntryWriter.new(filename, estimated_entry_count)
 
-    {:done, {state, entries, writer}} =
+    {:done, {entries, _offset}} =
       iterate(
         hashfun,
-        {:cont, {state, entries, writer}},
+        {:cont, {entries, 4}},
         new_dataset,
         old_file,
-        fn {state = %State{file_entries: file_entries, slot_counts: slot_counts}, entries, writer},
+        fn {entries, offset}, entry_hash, entry, _ ->
+          size = byte_size(entry)
+          table_idx = table_idx(entry_hash)
+
+          entries =
+            EntryWriter.insert(
+              entries,
+              {table_idx, entry_hash, offset + @hash_size}
+            )
+
+          offset = offset + @hash_size + @entry_size_size + size
+          {:cont, {entries, offset}}
+        end
+      )
+
+    entries
+  end
+
+  defp write_bloom(
+         %State{hashfun: hashfun},
+         bloom,
+         new_dataset,
+         old_file
+       ) do
+    {:done, bloom} =
+      iterate(
+        hashfun,
+        {:cont, bloom},
+        new_dataset,
+        old_file,
+        fn bloom, entry_hash, _entry, _ ->
+          {:cont, Bloom.add(bloom, entry_hash)}
+        end
+      )
+
+    bloom
+  end
+
+  defp write_data(
+         state = %State{
+           fp: fp,
+           hashfun: hashfun
+         },
+         new_dataset,
+         old_file
+       ) do
+    state = %State{state | file_entries: 0, slot_counts: %{}}
+    writer = FileWriter.new(fp, 0, module: @wfile)
+    writer = FileWriter.write(writer, "DET+")
+
+    {:done, {state, writer}} =
+      iterate(
+        hashfun,
+        {:cont, {state, writer}},
+        new_dataset,
+        old_file,
+        fn {state = %State{file_entries: file_entries, slot_counts: slot_counts}, writer},
            entry_hash,
            entry,
            _ ->
           table_idx = table_idx(entry_hash)
           slot_counts = Map.update(slot_counts, table_idx, 1, fn count -> count + 1 end)
-          state = Bloom.add(state, entry_hash)
           state = %State{state | file_entries: file_entries + 1, slot_counts: slot_counts}
           size = byte_size(entry)
-
-          entries =
-            EntryWriter.insert(
-              entries,
-              {table_idx, entry_hash, FileWriter.offset(writer) + @hash_size}
-            )
 
           writer =
             FileWriter.write(
@@ -777,7 +830,7 @@ defmodule DetsPlus do
                 entry::binary()>>
             )
 
-          {:cont, {state, entries, writer}}
+          {:cont, {state, writer}}
         end
       )
 
@@ -788,7 +841,7 @@ defmodule DetsPlus do
     )
     |> FileWriter.sync()
 
-    {state, entries}
+    state
   end
 
   _ =

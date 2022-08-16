@@ -6,21 +6,21 @@ defmodule DetsPlus.Bloom do
   @atomic_bits 64
   use GenServer
 
-  def create(state = %State{}, bloom_size) do
+  def create(bloom_size) do
     atomics = :atomics.new(ceil(bloom_size / @atomic_bits), signed: false)
     {:ok, pid} = GenServer.start_link(__MODULE__, %{bloom: atomics, bloom_size: bloom_size})
-    %State{state | bloom_size: bloom_size, bloom: pid}
+    pid
   end
 
-  def add(state = %State{bloom: ref}, entry) do
+  def add(ref, entry) do
     GenServer.cast(ref, {:add, entry})
-    state
+    ref
   end
 
-  def finalize(state = %State{bloom: ref}) do
-    binary = GenServer.call(ref, :finalize, :infinity)
+  def finalize(state = %State{}, ref) do
+    {binary, bloom_size} = GenServer.call(ref, :finalize, :infinity)
     GenServer.stop(ref)
-    %State{state | bloom: binary}
+    %State{state | bloom: binary, bloom_size: bloom_size}
   end
 
   def lookup(
@@ -62,6 +62,6 @@ defmodule DetsPlus.Bloom do
       end
       |> :erlang.iolist_to_binary()
 
-    {:reply, binary, state}
+    {:reply, {binary, bloom_size}, state}
   end
 end
