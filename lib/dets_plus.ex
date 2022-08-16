@@ -682,18 +682,30 @@ defmodule DetsPlus do
         {:ok, new_file} = @wfile.open(new_filename, opts)
         state = %State{state | fp: new_file}
         stats = add_stats(stats, :fopen)
-        bloom_size = (file_entries + length(new_dataset)) * 10
+        new_dataset_length = length(new_dataset)
+        bloom_size = (file_entries + new_dataset_length) * 10
 
         # setting the bloom size based of a size estimate
         future_bloom =
           Task.async(fn ->
             bloom = Bloom.create(bloom_size)
-            write_bloom(state, bloom, new_dataset, old_file)
+
+            async_iterate_consume(bloom, fn bloom, entry_hash, _entry, _ ->
+              {:cont, Bloom.add(bloom, entry_hash)}
+            end)
           end)
 
-        future_entries = Task.async(fn -> write_entries(state, new_dataset, old_file) end)
-        state = write_data(state, new_dataset, old_file)
-        state = Bloom.finalize(state, Task.await(future_bloom, :infinity))
+        future_entries = Task.async(fn -> write_entries(state, new_dataset_length) end)
+        future_state = Task.async(fn -> write_data(state) end)
+
+        # This starts of the file_reader sending entry data to above the future_* workers
+        pids = [future_bloom.pid, future_entries.pid, future_state.pid]
+        async_iterate_produce(hash_fun, new_dataset, old_file, pids)
+
+        state =
+          Task.await(future_state, :infinity)
+          |> Bloom.finalize(Task.await(future_bloom, :infinity))
+
         entries = Task.await(future_entries, :infinity)
 
         stats = add_stats(stats, :write_entries)
@@ -737,79 +749,38 @@ defmodule DetsPlus do
   end
 
   defp write_entries(
-         %State{
-           hashfun: hashfun,
-           file_entries: old_file_entries,
-           filename: filename
-         },
-         new_dataset,
-         old_file
+         %State{file_entries: old_file_entries, filename: filename},
+         new_dataset_length
        ) do
-    estimated_entry_count = length(new_dataset) + old_file_entries
+    estimated_entry_count = new_dataset_length + old_file_entries
     entries = EntryWriter.new(filename, estimated_entry_count)
 
-    {:done, {entries, _offset}} =
-      async_iterate(
-        hashfun,
-        {:cont, {entries, 4}},
-        new_dataset,
-        old_file,
-        fn {entries, offset}, entry_hash, entry, _ ->
-          size = byte_size(entry)
-          table_idx = table_idx(entry_hash)
+    {entries, _offset} =
+      async_iterate_consume({entries, 4}, fn {entries, offset}, entry_hash, entry, _ ->
+        size = byte_size(entry)
+        table_idx = table_idx(entry_hash)
 
-          entries =
-            EntryWriter.insert(
-              entries,
-              {table_idx, entry_hash, offset + @hash_size}
-            )
+        entries =
+          EntryWriter.insert(
+            entries,
+            {table_idx, entry_hash, offset + @hash_size}
+          )
 
-          offset = offset + @hash_size + @entry_size_size + size
-          {:cont, {entries, offset}}
-        end
-      )
+        offset = offset + @hash_size + @entry_size_size + size
+        {:cont, {entries, offset}}
+      end)
 
     entries
   end
 
-  defp write_bloom(
-         %State{hashfun: hashfun},
-         bloom,
-         new_dataset,
-         old_file
-       ) do
-    {:done, bloom} =
-      async_iterate(
-        hashfun,
-        {:cont, bloom},
-        new_dataset,
-        old_file,
-        fn bloom, entry_hash, _entry, _ ->
-          {:cont, Bloom.add(bloom, entry_hash)}
-        end
-      )
-
-    bloom
-  end
-
-  defp write_data(
-         state = %State{
-           fp: fp,
-           hashfun: hashfun
-         },
-         new_dataset,
-         old_file
-       ) do
+  defp write_data(state = %State{fp: fp}) do
     state = %State{state | file_entries: 0, slot_counts: %{}}
     writer = FileWriter.new(fp, 0, module: @wfile)
     writer = FileWriter.write(writer, "DET+")
 
-    {:done, {state, writer}} =
-      async_iterate(
-        hashfun,
-        {:cont, {state, writer}},
-        new_dataset,
-        old_file,
+    {state, writer} =
+      async_iterate_consume(
+        {state, writer},
         fn {state = %State{file_entries: file_entries, slot_counts: slot_counts}, writer},
            entry_hash,
            entry,
@@ -952,15 +923,12 @@ defmodule DetsPlus do
     end
   end
 
-  def async_iterate(
+  def async_iterate_produce(
         hash_fun,
-        {:cont, acc},
         new_dataset,
         file_reader,
-        fun
+        targets
       ) do
-    me = self()
-
     spawn_link(fn ->
       {:done, {items, _item_count}} =
         iterate(
@@ -973,7 +941,10 @@ defmodule DetsPlus do
             item_count = item_count + 1
 
             if item_count > 128 do
-              send(me, {:entries, Enum.reverse(items)})
+              for pid <- targets do
+                send(pid, {:entries, Enum.reverse(items)})
+              end
+
               {:cont, {[], 0}}
             else
               {:cont, {items, item_count}}
@@ -981,24 +952,24 @@ defmodule DetsPlus do
           end
         )
 
-      send(me, {:entries, Enum.reverse(items)})
-      send(me, :done)
+      for pid <- targets do
+        send(pid, {:entries, Enum.reverse(items)})
+        send(pid, :done)
+      end
     end)
-
-    async_iterate_loop(acc, fun)
   end
 
-  def async_iterate_loop(acc, fun) do
+  def async_iterate_consume(acc, fun) do
     receive do
       {:entries, entries} ->
         Enum.reduce(entries, acc, fn {entry_hash, binary_entry, term_entry}, acc ->
           {:cont, acc} = fun.(acc, entry_hash, binary_entry, term_entry)
           acc
         end)
-        |> async_iterate_loop(fun)
+        |> async_iterate_consume(fun)
 
       :done ->
-        {:done, acc}
+        acc
     end
   end
 
