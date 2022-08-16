@@ -684,21 +684,17 @@ defmodule DetsPlus do
         stats = add_stats(stats, :fopen)
         bloom_size = (file_entries + length(new_dataset)) * 10
 
-        {state, entries} =
-          encapsulate(fn ->
-            # setting the bloom size based of a size estimate
-            future_bloom =
-              Task.async(fn ->
-                bloom = Bloom.create(bloom_size)
-                write_bloom(state, bloom, new_dataset, old_file)
-              end)
-
-            future_entries = Task.async(fn -> write_entries(state, new_dataset, old_file) end)
-            state = write_data(state, new_dataset, old_file)
-            state = Bloom.finalize(state, Task.await(future_bloom, :infinity))
-            entries = Task.await(future_entries, :infinity)
-            {state, entries}
+        # setting the bloom size based of a size estimate
+        future_bloom =
+          Task.async(fn ->
+            bloom = Bloom.create(bloom_size)
+            write_bloom(state, bloom, new_dataset, old_file)
           end)
+
+        future_entries = Task.async(fn -> write_entries(state, new_dataset, old_file) end)
+        state = write_data(state, new_dataset, old_file)
+        state = Bloom.finalize(state, Task.await(future_bloom, :infinity))
+        entries = Task.await(future_entries, :infinity)
 
         stats = add_stats(stats, :write_entries)
         state = write_hashtable(state, entries)
@@ -753,7 +749,7 @@ defmodule DetsPlus do
     entries = EntryWriter.new(filename, estimated_entry_count)
 
     {:done, {entries, _offset}} =
-      iterate(
+      async_iterate(
         hashfun,
         {:cont, {entries, 4}},
         new_dataset,
@@ -783,7 +779,7 @@ defmodule DetsPlus do
          old_file
        ) do
     {:done, bloom} =
-      iterate(
+      async_iterate(
         hashfun,
         {:cont, bloom},
         new_dataset,
@@ -809,7 +805,7 @@ defmodule DetsPlus do
     writer = FileWriter.write(writer, "DET+")
 
     {:done, {state, writer}} =
-      iterate(
+      async_iterate(
         hashfun,
         {:cont, {state, writer}},
         new_dataset,
@@ -898,11 +894,6 @@ defmodule DetsPlus do
     state
   end
 
-  defp encapsulate(fun) do
-    # Task.async(fun) |> Task.await(:infinity)
-    fun.()
-  end
-
   defp next_power_of_two(n), do: next_power_of_two(n, 2)
   defp next_power_of_two(n, x) when n < x, do: x
   defp next_power_of_two(n, x), do: next_power_of_two(n, x * 2)
@@ -958,6 +949,56 @@ defmodule DetsPlus do
 
       _ ->
         reduce_overflow([entry | overflow], reader, fp)
+    end
+  end
+
+  def async_iterate(
+        hash_fun,
+        {:cont, acc},
+        new_dataset,
+        file_reader,
+        fun
+      ) do
+    me = self()
+
+    spawn_link(fn ->
+      {:done, {items, _item_count}} =
+        iterate(
+          hash_fun,
+          {:cont, {[], 0}},
+          new_dataset,
+          file_reader,
+          fn {items, item_count}, entry_hash, binary_entry, term_entry ->
+            items = [{entry_hash, binary_entry, term_entry} | items]
+            item_count = item_count + 1
+
+            if item_count > 128 do
+              send(me, {:entries, Enum.reverse(items)})
+              {:cont, {[], 0}}
+            else
+              {:cont, {items, item_count}}
+            end
+          end
+        )
+
+      send(me, {:entries, Enum.reverse(items)})
+      send(me, :done)
+    end)
+
+    async_iterate_loop(acc, fun)
+  end
+
+  def async_iterate_loop(acc, fun) do
+    receive do
+      {:entries, entries} ->
+        Enum.reduce(entries, acc, fn {entry_hash, binary_entry, term_entry}, acc ->
+          {:cont, acc} = fun.(acc, entry_hash, binary_entry, term_entry)
+          acc
+        end)
+        |> async_iterate_loop(fun)
+
+      :done ->
+        {:done, acc}
     end
   end
 
