@@ -158,34 +158,47 @@ defmodule DetsPlus do
       PagedFile.pread(fp, file_size - @slot_size, @slot_size)
 
     {:ok, header} = PagedFile.pread(fp, header_offset, file_size - header_offset - @slot_size)
-    %State{version: version} = state = :erlang.binary_to_term(header)
+    %State{version: version, bloom: bloom} = state = :erlang.binary_to_term(header)
 
     if version != @version do
       raise("incompatible dets+ version #{version}")
     end
 
-    %State{
+    state = %State{
       state
       | fp: fp,
         file_size: file_size
     }
+
+    if is_binary(bloom) do
+      state
+    else
+      {:ok, bloom} = PagedFile.pread(fp, bloom, header_offset - bloom)
+      %State{state | bloom: bloom}
+    end
   end
 
   @wfile PagedFile
-  defp store_state(state = %State{fp: fp}) do
-    offset = @wfile.size(fp)
+  defp store_state(state = %State{fp: fp, bloom: bloom}) do
+    bloom_offset = @wfile.size(fp)
+    @wfile.pwrite(fp, bloom_offset, bloom)
+    header_offset = @wfile.size(fp)
 
     bin =
-      :erlang.term_to_binary(%State{
-        state
-        | version: @version,
-          fp: nil,
-          sync: nil,
-          sync_waiters: [],
-          ets: nil
-      })
+      :erlang.term_to_binary(
+        %State{
+          state
+          | version: @version,
+            bloom: bloom_offset,
+            fp: nil,
+            sync: nil,
+            sync_waiters: [],
+            ets: nil
+        },
+        [:compressed]
+      )
 
-    @wfile.pwrite(fp, offset, bin <> <<offset::unsigned-size(@slot_size_bits)>>)
+    @wfile.pwrite(fp, header_offset, bin <> <<header_offset::unsigned-size(@slot_size_bits)>>)
     %State{state | file_size: @wfile.size(fp)}
   end
 

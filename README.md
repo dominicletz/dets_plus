@@ -148,17 +148,22 @@ File Layout Overview:
 <4 byte file id "DET+"> 
 <all entries>
 <256 hash tables>
+<bloom filter>
 <compressed header>
 ```
 
 Detailed Layout:
 ```
 <4 byte file id "DET+">
+
 for x <- all_entries
   <8 byte entry_hash> <4 byte entry_size> <entry_blob (from term_to_binary())>
+<16 bytes of zeros> 
 
 for table <- 0..255
   <8 byte entry_hash> <8 entry_offset>
+
+<binary bloom filter (size in header)>
 
 <%DetsPlus.State{} from term_to_binary()>
 <8 offset to %DetsPlus.State{}.
