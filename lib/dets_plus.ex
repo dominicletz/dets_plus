@@ -222,7 +222,9 @@ defmodule DetsPlus do
   Syncs pending writes to the persistent file and closes the table.
   """
   @spec close(DetsPlus.t()) :: :ok
-  def close(%__MODULE__{pid: pid}) do
+  def close(%__MODULE__{pid: pid}), do: close(pid)
+
+  def close(pid) when is_pid(pid) do
     call(pid, :sync)
     GenServer.stop(pid)
   end
@@ -231,7 +233,9 @@ defmodule DetsPlus do
   Deletes all objects from a table in almost constant time.
   """
   @spec delete_all_objects(DetsPlus.t()) :: :ok | {:error, atom()}
-  def delete_all_objects(%__MODULE__{pid: pid}) do
+  def delete_all_objects(%__MODULE__{pid: pid}), do: delete_all_objects(pid)
+
+  def delete_all_objects(pid) when is_pid(pid) do
     call(pid, :delete_all_objects)
   end
 
@@ -239,7 +243,9 @@ defmodule DetsPlus do
     Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
   @spec insert(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: :ok | {:error, atom()}
-  def insert(%__MODULE__{pid: pid}, objects) do
+  def insert(%__MODULE__{pid: pid}, objects), do: insert(pid, objects)
+
+  def insert(pid, objects) do
     call(pid, {:insert, List.wrap(objects)})
   end
 
@@ -247,6 +253,11 @@ defmodule DetsPlus do
   Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
   @spec insert_new(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: true | false
+  def insert_new(pid, tuple) when is_pid(pid) do
+    call(pid, :get_handle)
+    |> insert_new(tuple)
+  end
+
   def insert_new(%__MODULE__{pid: pid, hashfun: hashfun}, tuple) do
     tuple =
       List.wrap(tuple)
@@ -262,6 +273,8 @@ defmodule DetsPlus do
   Returns the number of object in the table. This is an estimate and the same as `info(dets, :size)`.
   """
   @spec count(DetsPlus.t()) :: integer()
+  def count(pid) when is_pid(pid), do: count(call(pid, :get_handle))
+
   def count(dets = %__MODULE__{}) do
     info(dets, :size)
   end
@@ -270,6 +283,8 @@ defmodule DetsPlus do
   Reducer function following the `Enum` protocol.
   """
   @spec reduce(DetsPlus.t(), any(), fun()) :: any()
+  def reduce(pid, acc, fun) when is_pid(pid), do: reduce(call(pid, :get_handle), acc, fun)
+
   def reduce(dets = %__MODULE__{}, acc, fun) do
     Enum.reduce(dets, acc, fun)
   end
@@ -295,6 +310,8 @@ defmodule DetsPlus do
   Notice that the order of objects returned is unspecified. In particular, the order in which objects were inserted is not reflected.
   """
   @spec lookup(DetsPlus.t(), any) :: [tuple() | map()] | {:error, atom()}
+  def lookup(pid, key) when is_pid(pid), do: lookup(call(pid, :get_handle), key)
+
   def lookup(%__MODULE__{pid: pid, keyhashfun: keyhashfun}, key) do
     call(pid, {:lookup, key, keyhashfun.(key)})
   end
@@ -326,7 +343,9 @@ defmodule DetsPlus do
   next sync call.
   """
   @spec sync(DetsPlus.t()) :: :ok
-  def sync(%__MODULE__{pid: pid}) do
+  def sync(%__MODULE__{pid: pid}), do: sync(pid)
+
+  def sync(pid) when is_pid(pid) do
     call(pid, :sync, :infinity)
   end
 
@@ -334,7 +353,9 @@ defmodule DetsPlus do
   Starts a sync of all changes to the disk. Same as `sync/1` but doesn't block
   """
   @spec start_sync(DetsPlus.t()) :: :ok
-  def start_sync(%__MODULE__{pid: pid}) do
+  def start_sync(%__MODULE__{pid: pid}), do: start_sync(pid)
+
+  def start_sync(pid) when is_pid(pid) do
     call(pid, :start_sync, :infinity)
   end
 
@@ -348,7 +369,9 @@ defmodule DetsPlus do
   - `{type, type()}` - The table type.
   """
   @spec info(DetsPlus.t()) :: [] | nil
-  def info(%__MODULE__{pid: pid}) do
+  def info(%__MODULE__{pid: pid}), do: info(pid)
+
+  def info(pid) when is_pid(pid) do
     call(pid, :info)
   end
 
