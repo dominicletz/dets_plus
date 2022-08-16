@@ -683,16 +683,17 @@ defmodule DetsPlus do
         state = %State{state | fp: new_file}
         stats = add_stats(stats, :fopen)
         new_dataset_length = length(new_dataset)
-        bloom_size = (file_entries + new_dataset_length) * 10
 
         # setting the bloom size based of a size estimate
         future_bloom =
           Task.async(fn ->
-            bloom = Bloom.create(bloom_size)
+            bloom_size = (file_entries + new_dataset_length) * 10
 
-            async_iterate_consume(bloom, fn bloom, entry_hash, _entry, _ ->
+            Bloom.create(bloom_size)
+            |> async_iterate_consume(fn bloom, entry_hash, _entry, _ ->
               {:cont, Bloom.add(bloom, entry_hash)}
             end)
+            |> Bloom.finalize()
           end)
 
         future_entries = Task.async(fn -> write_entries(state, new_dataset_length) end)
@@ -702,9 +703,9 @@ defmodule DetsPlus do
         pids = [future_bloom.pid, future_entries.pid, future_state.pid]
         async_iterate_produce(hash_fun, new_dataset, old_file, pids)
 
-        state =
-          Task.await(future_state, :infinity)
-          |> Bloom.finalize(Task.await(future_bloom, :infinity))
+        state = Task.await(future_state, :infinity)
+        {bloom, bloom_size} = Task.await(future_bloom, :infinity)
+        state = %State{state | bloom: bloom, bloom_size: bloom_size}
 
         entries = Task.await(future_entries, :infinity)
 

@@ -25,7 +25,7 @@ defmodule DetsPlus.Bloom do
     state
   end
 
-  def finalize(state = %State{}, %Bloom{bloom: ref, bloom_size: bloom_size}) do
+  def finalize(%Bloom{bloom: ref, bloom_size: bloom_size}) do
     e = ceil(bloom_size / @atomic_bits)
 
     binary =
@@ -34,7 +34,7 @@ defmodule DetsPlus.Bloom do
       end
       |> :erlang.iolist_to_binary()
 
-    %State{state | bloom: binary, bloom_size: bloom_size}
+    {binary, bloom_size}
   end
 
   def lookup(
