@@ -852,11 +852,7 @@ defmodule DetsPlus do
 
     Enum.reduce(0..255, writer, fn table_idx, writer ->
       slot_count = Map.get(new_slot_counts, table_idx, 0)
-
-      entries =
-        EntryWriter.lookup(entries, table_idx)
-        |> Enum.sort()
-
+      entries = EntryWriter.lookup(entries, table_idx)
       start_offset = FileWriter.offset(writer)
       {writer, overflow} = reduce_entries(entries, writer, slot_count)
 
