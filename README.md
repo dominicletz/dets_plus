@@ -1,6 +1,6 @@
 # DetsPlus
 
-DetsPlus persistent tuple storage.
+DetsPlus persistent tuple/struct/map storage.
 
 DetsPlus has a similiar API as `dets` but without
 the 2GB file storage limit. Writes are buffered in an
@@ -10,7 +10,7 @@ to the persistent storage.
 While `sync()` or `auto_save` is in progress the database
 can still be read from and written to.
 
-`DetsPlus` supports the `Enumerable` protocol, so you can most of the `Enum.*` functions on `DetsPlus`
+`DetsPlus` supports the `Enumerable` protocol, so you can use most of the `Enum.*` functions on `DetsPlus`
 
 There is no commitlog - not synced writes are lost.
 Lookups are possible by key and non-matches are accelerated
@@ -28,7 +28,7 @@ Limits are:
 
 - `:dets` is limited to 2gb of data `DetsPlus` has no such limit.
 - `DetsPlus` supports the `Enumerable` protocol. So you can call `Enum.reduce()` on it.
-- `DetsPlus` supports Maps and Structs in addition to tuples.
+- `DetsPlus` supports Maps and Structs in addition to tuples when `keypos` is an atom (name of the key field).
 - `DetsPlus` is SLOWER in reading than `:dets` because it goes to disk for that. 
 - Only type = `:set` is supported
 
@@ -81,52 +81,53 @@ As mentioned above reading `DetsPlus` is slower than `:dets` because `DetsPlus` 
 some measurements:
 
 ```
+$ mix run scripts/bench.exs
 running write test: :dets
-4.563s
-4.465s
-4.466s
+4.588s
+4.419s
+4.542s
 running write test: DetsPlus
-1.436s
-1.378s
-1.381s
+1.236s
+1.093s
+1.123s
 
 running rw test: :dets
-2.902s
-3.046s
-2.802s
+3.04s
+2.996s
+2.901s
 running rw test: DetsPlus
-2.175s
-2.173s
-2.164s
+2.142s
+2.198s
+2.079s
 
 running read test: :dets
-1.35s
-0.946s
-0.94s
+1.033s
+0.993s
+0.931s
 running read test: DetsPlus
-1.644s
-1.645s
-1.616s
+1.694s
+1.68s
+1.664s
 
 running sync_test: 0 + 150_000 new inserts test: DetsPlus
-0.908s
-0.909s
-0.927s
+0.855s
+0.835s
+0.813s
 
 running sync_test: 0 + 1_500_000 new inserts test: DetsPlus
-10.506s
-10.477s
-10.876s
+9.262s
+10.158s
+9.669s
 
 running sync_test 1_500_000 + 1 new inserts test: DetsPlus
-8.813s
-8.832s
-8.875s
+2.943s
+2.825s
+2.773s
 
 running bloom test: DetsPlus.Bloom
-0.265s
-0.291s
-0.271s
+0.279s
+0.256s
+0.277s
 ```
 
 ## File Structure
