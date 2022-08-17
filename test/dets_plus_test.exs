@@ -171,5 +171,17 @@ defmodule DetsPlus.Test do
       [%{id: 1, value: 42}] = DetsPlus.lookup(dets, 1)
       :ok = DetsPlus.close(dets)
     end
+
+    alias DetsPlus.FileWriter
+
+    test "file writer limit" do
+      PagedFile.delete("test_file7")
+      {:ok, fp} = PagedFile.open("test_file7")
+      PagedFile.pwrite(fp, 0, "1234567890")
+      writer = FileWriter.new(fp, 0, limit: 5, module: PagedFile)
+      writer = FileWriter.write(writer, "abcdefghijklmnopqrstuvw")
+      FileWriter.sync(writer)
+      assert PagedFile.pread(fp, 0, 10) == {:ok, "abcde67890"}
+    end
   end
 end

@@ -866,10 +866,22 @@ defmodule DetsPlus do
       %State{state | slot_counts: new_slot_counts}
       |> init_table_offsets(@wfile.size(fp))
 
-    writer = FileWriter.new(fp, @wfile.size(fp), module: @wfile)
+    Enum.chunk_every(0..255, 64)
+    |> Enum.map(fn range ->
+      start_offset = table_offset(state, hd(range))
+      end_offset = table_offset(state, List.last(range) + 1)
+      writer = FileWriter.new(fp, start_offset, module: @wfile, limit: end_offset)
+      Task.async(fn -> write_hashtable_range(range, writer, entries, new_slot_counts) end)
+    end)
+    |> Task.await_many(:infinity)
 
-    Enum.reduce(0..255, writer, fn table_idx, writer ->
-      slot_count = Map.get(new_slot_counts, table_idx, 0)
+    EntryWriter.close(entries)
+    state
+  end
+
+  defp write_hashtable_range(range, writer, entries, slot_counts) do
+    Enum.reduce(range, writer, fn table_idx, writer ->
+      slot_count = Map.get(slot_counts, table_idx, 0)
       entries = EntryWriter.lookup(entries, table_idx)
       start_offset = FileWriter.offset(writer)
       {writer, overflow} = reduce_entries(entries, writer, slot_count)
@@ -881,17 +893,13 @@ defmodule DetsPlus do
 
         reduce_overflow(
           Enum.reverse(overflow),
-          FileReader.new(fp, start_offset, module: @wfile),
-          fp
+          FileReader.new(writer.fp, start_offset, module: @wfile)
         )
 
         writer
       end
     end)
     |> FileWriter.sync()
-
-    EntryWriter.close(entries)
-    state
   end
 
   defp next_power_of_two(n), do: next_power_of_two(n, 2)
@@ -936,19 +944,19 @@ defmodule DetsPlus do
     end
   end
 
-  defp reduce_overflow([], _reader, _fp), do: :ok
+  defp reduce_overflow([], _reader), do: :ok
 
-  defp reduce_overflow([entry | overflow], reader, fp) do
+  defp reduce_overflow([entry | overflow], reader) do
     curr = FileReader.offset(reader)
     {reader, next} = FileReader.read(reader, @slot_size + @hash_size)
 
     case next do
       @null_binary ->
-        @wfile.pwrite(fp, curr, entry)
-        reduce_overflow(overflow, reader, fp)
+        @wfile.pwrite(reader.fp, curr, entry)
+        reduce_overflow(overflow, reader)
 
       _ ->
-        reduce_overflow([entry | overflow], reader, fp)
+        reduce_overflow([entry | overflow], reader)
     end
   end
 
