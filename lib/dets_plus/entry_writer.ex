@@ -116,7 +116,6 @@ defmodule DetsPlus.EntryWriter do
           items: [],
           items_count: 0,
           items_count_limit: 1000,
-          # items_count_limit: 10,
           fp: temp_fp,
           writer_offset: table_idx * table_size * item_size,
           writer_count: 0,
