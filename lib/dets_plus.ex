@@ -958,11 +958,11 @@ defmodule DetsPlus do
   end
 
   defp async_iterate_produce(
-        hash_fun,
-        new_dataset,
-        file_reader,
-        targets
-      ) do
+         hash_fun,
+         new_dataset,
+         file_reader,
+         targets
+       ) do
     spawn_link(fn ->
       init_acc = {:cont, {[], 0, targets}}
 
