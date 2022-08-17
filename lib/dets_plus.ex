@@ -171,12 +171,8 @@ defmodule DetsPlus do
         file_size: file_size
     }
 
-    if is_binary(bloom) do
-      state
-    else
-      {:ok, bloom} = PagedFile.pread(fp, bloom, header_offset - bloom)
-      %State{state | bloom: bloom}
-    end
+    {:ok, bloom} = PagedFile.pread(fp, bloom, header_offset - bloom)
+    %State{state | bloom: bloom}
   end
 
   @wfile PagedFile
