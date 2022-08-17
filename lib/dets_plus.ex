@@ -1,6 +1,6 @@
 defmodule DetsPlus do
   @moduledoc """
-  DetsPlus persistent tuple storage.
+  DetsPlus persistent tuple/struct/map storage.
 
   [DetsPlus](https://github.com/dominicletz/dets_plus) has a similiar API as `dets` but without
   the 2GB file storage limit. Writes are buffered in an
@@ -263,17 +263,17 @@ defmodule DetsPlus do
   Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
   @spec insert_new(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: true | false
-  def insert_new(pid, tuple) when is_pid(pid) or is_atom(pid) do
+  def insert_new(pid, object) when is_pid(pid) or is_atom(pid) do
     call(pid, :get_handle)
-    |> insert_new(tuple)
+    |> insert_new(object)
   end
 
-  def insert_new(%__MODULE__{pid: pid, hashfun: hashfun}, tuple) do
-    tuple =
-      List.wrap(tuple)
-      |> Enum.map(fn tuple -> {tuple, hashfun.(tuple)} end)
+  def insert_new(%__MODULE__{pid: pid, hashfun: hashfun}, object) do
+    objects =
+      List.wrap(object)
+      |> Enum.map(fn object -> {object, hashfun.(object)} end)
 
-    case call(pid, {:insert_new, tuple}) do
+    case call(pid, {:insert_new, objects}) do
       :ok -> true
       false -> false
     end
@@ -496,7 +496,7 @@ defmodule DetsPlus do
     else
       fallback =
         Enum.reduce(objects, fallback, fn object, fallback ->
-          Map.put(fallback, keyfun.(object), objects)
+          Map.put(fallback, keyfun.(object), object)
         end)
 
       if map_size(fallback) > 1_000_000 do
@@ -519,8 +519,8 @@ defmodule DetsPlus do
         state = %State{ets: ets, sync_fallback: fallback, keyfun: keyfun}
       ) do
     exists =
-      Enum.any?(objects, fn {tuple, hash} ->
-        key = keyfun.(tuple)
+      Enum.any?(objects, fn {object, hash} ->
+        key = keyfun.(object)
 
         Map.has_key?(fallback, key) || :ets.lookup(ets, key) != [] ||
           file_lookup(state, key, hash) != []
@@ -688,7 +688,7 @@ defmodule DetsPlus do
         # Ensuring hash function sort order
         new_dataset =
           parallel_hash(hash_fun, new_dataset)
-          |> Enum.sort_by(fn {hash, _tuple} -> hash end, :asc)
+          |> Enum.sort_by(fn {hash, _object} -> hash end, :asc)
 
         stats = add_stats(stats, :ets_sort)
 
@@ -712,17 +712,7 @@ defmodule DetsPlus do
         new_dataset_length = length(new_dataset)
 
         # setting the bloom size based of a size estimate
-        future_bloom =
-          Task.async(fn ->
-            bloom_size = (file_entries + new_dataset_length) * 10
-
-            Bloom.create(bloom_size)
-            |> async_iterate_consume(fn bloom, entry_hash, _entry, _ ->
-              {:cont, Bloom.add(bloom, entry_hash)}
-            end)
-            |> Bloom.finalize()
-          end)
-
+        future_bloom = Task.async(fn -> write_bloom(file_entries + new_dataset_length) end)
         future_entries = Task.async(fn -> write_entries(state, new_dataset_length) end)
         future_state = Task.async(fn -> write_data(state) end)
 
@@ -774,6 +764,16 @@ defmodule DetsPlus do
         {hashfun.(object), object}
       end)
     end
+  end
+
+  defp write_bloom(estimated_file_entries) do
+    bloom_size = estimated_file_entries * 10
+
+    Bloom.create(bloom_size)
+    |> async_iterate_consume(fn bloom, entry_hash, _entry, _ ->
+      {:cont, Bloom.add(bloom, entry_hash)}
+    end)
+    |> Bloom.finalize()
   end
 
   defp write_entries(
@@ -954,33 +954,31 @@ defmodule DetsPlus do
         targets
       ) do
     spawn_link(fn ->
-      {:done, {items, _item_count}} =
-        iterate(
-          hash_fun,
-          {:cont, {[], 0}},
-          new_dataset,
-          file_reader,
-          fn {items, item_count}, entry_hash, binary_entry, term_entry ->
-            items = [{entry_hash, binary_entry, term_entry} | items]
-            item_count = item_count + 1
+      init_acc = {:cont, {[], 0, targets}}
 
-            if item_count > 128 do
-              for pid <- targets do
-                send(pid, {:entries, Enum.reverse(items)})
-              end
-
-              {:cont, {[], 0}}
-            else
-              {:cont, {items, item_count}}
-            end
-          end
-        )
+      {:done, {items, _item_count, _targets}} =
+        iterate(hash_fun, init_acc, new_dataset, file_reader, &async_iterator/4)
 
       for pid <- targets do
         send(pid, {:entries, Enum.reverse(items)})
         send(pid, :done)
       end
     end)
+  end
+
+  defp async_iterator({items, item_count, targets}, entry_hash, binary_entry, term_entry) do
+    items = [{entry_hash, binary_entry, term_entry} | items]
+    item_count = item_count + 1
+
+    if item_count > 128 do
+      for pid <- targets do
+        send(pid, {:entries, Enum.reverse(items)})
+      end
+
+      {:cont, {[], 0, targets}}
+    else
+      {:cont, {items, item_count, targets}}
+    end
   end
 
   def async_iterate_consume(acc, fun) do
@@ -1231,9 +1229,9 @@ defimpl Enumerable, for: DetsPlus do
     {new_dataset, _} =
       DetsPlus.parallel_hash(hash_fun, new_data1 ++ new_data2)
       |> Enum.sort_by(fn {hash, _tuple} -> hash end, :desc)
-      |> Enum.reduce({[], nil}, fn {hash, tuple}, {ret, prev} ->
+      |> Enum.reduce({[], nil}, fn {hash, object}, {ret, prev} ->
         if prev != hash do
-          {[{hash, tuple} | ret], hash}
+          {[{hash, object} | ret], hash}
         else
           {ret, hash}
         end
