@@ -1,7 +1,7 @@
 defmodule DetsPlus.MixProject do
   use Mix.Project
 
-  @version "1.0.1"
+  @version "2.0.0"
   @name "DetsPlus"
   @url "https://github.com/dominicletz/dets_plus"
   @maintainers ["Dominic Letz"]
@@ -67,6 +67,7 @@ defmodule DetsPlus.MixProject do
       {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.2", only: [:dev], runtime: false},
       {:paged_file, "~> 1.0"}
+      # {:paged_file, path: "../paged_file"}
     ]
   end
 end

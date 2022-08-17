@@ -18,6 +18,8 @@ defmodule DetsPlus.Test do
 
       DetsPlus.sync(dets)
 
+      # IO.inspect({:dets, Enum.to_list(dets) |> Enum.sort()})
+
       for x <- range do
         assert DetsPlus.lookup(dets, x) == [{x}]
       end
@@ -125,6 +127,61 @@ defmodule DetsPlus.Test do
       assert DetsPlus.lookup(dets, 1) == [{3, 1, 3}]
       assert DetsPlus.sync(dets) == :ok
       assert DetsPlus.lookup(dets, 1) == [{3, 1, 3}]
+    end
+
+    test "delete_all_objects" do
+      File.rm("test_file5")
+      {:ok, dets} = DetsPlus.open_file(:test_file5)
+
+      for x <- 1..1000 do
+        DetsPlus.insert(dets, {x})
+      end
+
+      assert DetsPlus.count(dets) == 1000
+      assert DetsPlus.start_sync(dets) == :ok
+      assert DetsPlus.delete_all_objects(dets) == :ok
+      assert DetsPlus.count(dets) == 0
+      assert DetsPlus.lookup(dets, 1) == []
+      assert Enum.to_list(dets) == []
+
+      # Test run 2 with a  pre-existing file
+      DetsPlus.insert(dets, {1})
+      assert Enum.to_list(dets) == [{1}]
+      DetsPlus.close(dets)
+
+      {:ok, dets} = DetsPlus.open_file(:test_file5)
+      assert Enum.to_list(dets) == [{1}]
+
+      for x <- 1..1000 do
+        DetsPlus.insert(dets, {x})
+      end
+
+      assert DetsPlus.count(dets) == 1001
+      assert DetsPlus.start_sync(dets) == :ok
+      assert DetsPlus.delete_all_objects(dets) == :ok
+      assert DetsPlus.count(dets) == 0
+      assert DetsPlus.lookup(dets, 1) == []
+      assert Enum.to_list(dets) == []
+    end
+
+    test "map storage" do
+      File.rm("test_file6")
+      {:ok, dets} = DetsPlus.open_file(:test_file6, keypos: :id)
+      DetsPlus.insert(dets, %{id: 1, value: 42})
+      [%{id: 1, value: 42}] = DetsPlus.lookup(dets, 1)
+      :ok = DetsPlus.close(dets)
+    end
+
+    alias DetsPlus.FileWriter
+
+    test "file writer limit" do
+      PagedFile.delete("test_file7")
+      {:ok, fp} = PagedFile.open("test_file7")
+      PagedFile.pwrite(fp, 0, "1234567890")
+      writer = FileWriter.new(fp, 0, limit: 5, module: PagedFile)
+      writer = FileWriter.write(writer, "abcdefghijklmnopqrstuvw")
+      FileWriter.sync(writer)
+      assert PagedFile.pread(fp, 0, 10) == {:ok, "abcde67890"}
     end
   end
 end
