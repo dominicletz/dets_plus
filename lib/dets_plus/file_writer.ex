@@ -1,8 +1,5 @@
 defmodule DetsPlus.FileWriter do
-  @moduledoc """
-    Helper module to accelerate linear file reads. Reads next `buffer_size`
-    bytes and keeps in state.
-  """
+  @moduledoc false
   alias DetsPlus.FileWriter
   defstruct [:fp, :module, :buffer_size, :offset, :chunk, :chunk_size, :limit]
 

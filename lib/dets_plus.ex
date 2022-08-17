@@ -957,7 +957,7 @@ defmodule DetsPlus do
     end
   end
 
-  def async_iterate_produce(
+  defp async_iterate_produce(
         hash_fun,
         new_dataset,
         file_reader,
@@ -991,7 +991,7 @@ defmodule DetsPlus do
     end
   end
 
-  def async_iterate_consume(acc, fun) do
+  defp async_iterate_consume(acc, fun) do
     receive do
       {:entries, entries} ->
         Enum.reduce(entries, acc, fn {entry_hash, binary_entry, term_entry}, acc ->

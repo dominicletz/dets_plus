@@ -1,7 +1,5 @@
 defmodule DetsPlus.EntryWriter do
-  @moduledoc """
-    Helper module to accelerate ETS inserts.
-  """
+  @moduledoc false
   alias DetsPlus.{EntryWriter, FileReader}
   defstruct [:map, :fp, :filename]
 
