@@ -72,6 +72,7 @@ defmodule DetsPlus do
       :sync,
       :sync_waiters,
       :file_size,
+      :header_size,
       :sync_fallback,
       :creation_stats
     ]
@@ -199,7 +200,7 @@ defmodule DetsPlus do
       )
 
     @wfile.pwrite(fp, header_offset, bin <> <<header_offset::unsigned-size(@slot_size_bits)>>)
-    %State{state | file_size: @wfile.size(fp)}
+    %State{state | file_size: @wfile.size(fp), header_size: byte_size(bin)}
   end
 
   @impl true
@@ -390,6 +391,7 @@ defmodule DetsPlus do
   Returns the information associated with `item` for the table. The following items are allowed:
 
   - `{file_size, integer() >= 0}}` - The file size, in bytes.
+  - `{header_size, integer() >= 0}}` - The size of erlang term encoded header.
   - `{bloom_bytes, integer() >= 0}}` - The size of the in-memory and on-disk bloom filter, in bytes.
   - `{hashtable_bytes, integer() >= 0}}` - The size of the on-disk lookup hashtable, in bytes.
   - `{filename, file:name()}` - The name of the file where objects are stored.
@@ -400,6 +402,7 @@ defmodule DetsPlus do
   @spec info(
           DetsPlus.t(),
           :file_size
+          | :header_size
           | :filename
           | :keypos
           | :size
@@ -560,6 +563,7 @@ defmodule DetsPlus do
           type: type,
           ets: ets,
           file_size: file_size,
+          header_size: header_size,
           file_entries: file_entries,
           creation_stats: creation_stats,
           slot_counts: slot_counts
@@ -570,6 +574,7 @@ defmodule DetsPlus do
 
     info = [
       file_size: file_size,
+      header_size: header_size,
       bloom_bytes: byte_size(bloom),
       hashtable_bytes: table_size,
       filename: filename,
