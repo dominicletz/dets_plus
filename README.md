@@ -82,51 +82,51 @@ some measurements:
 ```
 $ mix run scripts/bench.exs
 running write test: :dets
-4.588s
-4.419s
-4.542s
+4.792s
+4.869s
+4.861s
 running write test: DetsPlus
-1.236s
-1.093s
-1.123s
+1.223s
+1.098s
+1.001s
 
 running rw test: :dets
-3.04s
-2.996s
-2.901s
+4.2s
+3.118s
+3.485s
 running rw test: DetsPlus
-2.142s
-2.198s
-2.079s
+2.057s
+2.019s
+2.03s
 
 running read test: :dets
-1.033s
-0.993s
-0.931s
+0.929s
+0.905s
+0.905s
 running read test: DetsPlus
-1.694s
-1.68s
-1.664s
+1.617s
+1.657s
+1.645s
 
 running sync_test: 0 + 150_000 new inserts test: DetsPlus
-0.855s
-0.835s
-0.813s
+0.577s
+0.599s
+0.609s
 
 running sync_test: 0 + 1_500_000 new inserts test: DetsPlus
-9.262s
-10.158s
-9.669s
+6.999s
+6.689s
+6.526s
 
 running sync_test 1_500_000 + 1 new inserts test: DetsPlus
-2.943s
-2.825s
-2.773s
+2.915s
+2.818s
+2.812s
 
 running bloom test: DetsPlus.Bloom
-0.279s
-0.256s
 0.277s
+0.254s
+0.276s
 ```
 
 ## File Structure

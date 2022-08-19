@@ -170,24 +170,25 @@ defmodule DetsPlus.Bench do
     context = %{rounds: 3, modules: [DetsPlus.Bloom], prepare: nil, test_size: 1_500_000}
     run(context, "bloom", &bloom_test/2)
 
-    hashes = [
-      :ripemd160,
-      :sha,
-      :sha224,
-      :sha256,
-      :sha384,
-      :sha512,
-      :sha3_224,
-      :sha3_256,
-      :sha3_384,
-      :sha3_512,
-      :blake2b,
-      :blake2s,
-      :md5,
-      :md4
-    ]
+    # The impact of a faster hash doesn't seem relevant in testing, so we stick with sha256
+    # hashes = [
+    #   :ripemd160,
+    #   :sha,
+    #   :sha224,
+    #   :sha256,
+    #   :sha384,
+    #   :sha512,
+    #   :sha3_224,
+    #   :sha3_256,
+    #   :sha3_384,
+    #   :sha3_512,
+    #   :blake2b,
+    #   :blake2s,
+    #   :md5,
+    #   :md4
+    # ]
 
-    context = %{rounds: 3, modules: hashes, prepare: nil, test_size: 1_500_000}
-    run(context, "hash", &hash_test/2)
+    # context = %{rounds: 3, modules: hashes, prepare: nil, test_size: 1_500_000}
+    # run(context, "hash", &hash_test/2)
   end
 end
