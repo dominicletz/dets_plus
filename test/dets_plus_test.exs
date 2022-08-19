@@ -68,6 +68,10 @@ defmodule DetsPlus.Test do
       assert DetsPlus.info(dets, :size) == 1
       assert DetsPlus.lookup(dets, 1) == [{1, 1, 1}]
       assert DetsPlus.insert_new(dets, {1, 1, 1}) == false
+      assert DetsPlus.delete_object(dets, {1, 1, 1}) == :ok
+      assert Enum.to_list(dets) == []
+      assert DetsPlus.lookup(dets, 1) == []
+      assert DetsPlus.insert_new(dets, {1, 1, 1}) == true
 
       # Save and reopen to test persistency
       assert DetsPlus.close(dets) == :ok
@@ -75,6 +79,10 @@ defmodule DetsPlus.Test do
       assert DetsPlus.info(dets, :size) == 1
       assert DetsPlus.lookup(dets, 1) == [{1, 1, 1}]
       assert DetsPlus.insert_new(dets, {1, 1, 1}) == false
+      assert DetsPlus.delete_object(dets, {1, 1, 1}) == :ok
+      assert Enum.to_list(dets) == []
+      assert DetsPlus.lookup(dets, 1) == []
+      assert DetsPlus.insert_new(dets, {1, 1, 1}) == true
 
       # Overwrite a value
       assert DetsPlus.insert(dets, {1, 2, 2}) == :ok

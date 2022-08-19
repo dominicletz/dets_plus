@@ -248,13 +248,41 @@ defmodule DetsPlus do
   end
 
   @doc """
+  Deletes all instances of a specified object from a table.
+  """
+  @spec delete_object(DetsPlus.t(), tuple() | map()) :: :ok | {:error, atom()}
+  def delete_object(pid, object) when is_pid(pid) or is_atom(pid) do
+    delete_object(call(pid, :get_handle), object)
+  end
+
+  def delete_object(dets = %__MODULE__{keyfun: keyfun}, object) do
+    delete(dets, keyfun.(object))
+  end
+
+  @doc """
+  Deletes all objects with key Key from table Name.
+  """
+  @spec delete(DetsPlus.t(), any()) :: :ok | {:error, atom()}
+  def delete(%__MODULE__{pid: pid}, key), do: delete(pid, key)
+
+  def delete(pid, key) when is_pid(pid) or is_atom(pid) do
+    call(pid, {:insert, [{key, :delete}]})
+  end
+
+  @doc """
     Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
   @spec insert(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: :ok | {:error, atom()}
-  def insert(%__MODULE__{pid: pid}, objects), do: insert(pid, objects)
+  def insert(pid, objects) when is_pid(pid) or is_atom(pid) do
+    insert(call(pid, :get_handle), objects)
+  end
 
-  def insert(pid, objects) do
-    call(pid, {:insert, List.wrap(objects)})
+  def insert(%__MODULE__{pid: pid, keyfun: keyfun}, objects) do
+    objects =
+      List.wrap(objects)
+      |> Enum.map(fn object -> {keyfun.(object), object} end)
+
+    call(pid, {:insert, objects})
   end
 
   @doc """
@@ -262,14 +290,13 @@ defmodule DetsPlus do
   """
   @spec insert_new(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: true | false
   def insert_new(pid, object) when is_pid(pid) or is_atom(pid) do
-    call(pid, :get_handle)
-    |> insert_new(object)
+    insert_new(call(pid, :get_handle), object)
   end
 
-  def insert_new(%__MODULE__{pid: pid, hashfun: hashfun}, object) do
+  def insert_new(%__MODULE__{pid: pid, hashfun: hashfun, keyfun: keyfun}, object) do
     objects =
       List.wrap(object)
-      |> Enum.map(fn object -> {object, hashfun.(object)} end)
+      |> Enum.map(fn object -> {keyfun.(object), hashfun.(object), object} end)
 
     case call(pid, {:insert_new, objects}) do
       :ok -> true
@@ -486,17 +513,16 @@ defmodule DetsPlus do
           ets: ets,
           sync: sync,
           sync_fallback: fallback,
-          sync_waiters: sync_waiters,
-          keyfun: keyfun
+          sync_waiters: sync_waiters
         }
       ) do
     if sync == nil do
-      :ets.insert(ets, Enum.map(objects, fn object -> {keyfun.(object), object} end))
+      :ets.insert(ets, objects)
       {:reply, :ok, check_auto_save(state)}
     else
       fallback =
-        Enum.reduce(objects, fallback, fn object, fallback ->
-          Map.put(fallback, keyfun.(object), object)
+        Enum.reduce(objects, fallback, fn {key, object}, fallback ->
+          Map.put(fallback, key, object)
         end)
 
       if map_size(fallback) > 1_000_000 do
@@ -513,41 +539,22 @@ defmodule DetsPlus do
     end
   end
 
-  def handle_call(
-        {:insert_new, objects},
-        from,
-        state = %State{ets: ets, sync_fallback: fallback, keyfun: keyfun}
-      ) do
+  def handle_call({:insert_new, objects}, from, state) do
     exists =
-      Enum.any?(objects, fn {object, hash} ->
-        key = keyfun.(object)
-
-        Map.has_key?(fallback, key) || :ets.lookup(ets, key) != [] ||
-          file_lookup(state, key, hash) != []
+      Enum.any?(objects, fn {key, hash, _object} ->
+        do_lookup(key, hash, state) != []
       end)
 
     if exists do
       {:reply, false, state}
     else
+      objects = Enum.map(objects, fn {key, _hash, object} -> {key, object} end)
       handle_call({:insert, objects}, from, state)
     end
   end
 
-  def handle_call(
-        {:lookup, key, hash},
-        _from,
-        state = %State{ets: ets, sync_fallback: fallback}
-      ) do
-    case Map.get(fallback, key) do
-      nil ->
-        case :ets.lookup(ets, key) do
-          [] -> {:reply, file_lookup(state, key, hash), state}
-          [{^key, object}] -> {:reply, [object], state}
-        end
-
-      value ->
-        {:reply, [value], state}
-    end
+  def handle_call({:lookup, key, hash}, _from, state) do
+    {:reply, do_lookup(key, hash, state), state}
   end
 
   def handle_call(
@@ -607,6 +614,23 @@ defmodule DetsPlus do
   def handle_call(:sync, from, state = %State{sync: sync, sync_waiters: sync_waiters})
       when is_pid(sync) do
     {:noreply, %State{state | sync_waiters: [from | sync_waiters]}}
+  end
+
+  defp do_lookup(key, hash, state = %State{ets: ets, sync_fallback: fallback}) do
+    case Map.get(fallback, key) do
+      :delete ->
+        []
+
+      nil ->
+        case :ets.lookup(ets, key) do
+          [] -> file_lookup(state, key, hash)
+          [{_key, :delete}] -> []
+          [{_key, object}] -> [object]
+        end
+
+      value ->
+        [value]
+    end
   end
 
   @impl true
@@ -672,7 +696,8 @@ defmodule DetsPlus do
            fp: fp,
            filename: filename,
            file_entries: file_entries,
-           hashfun: hash_fun
+           hashfun: hash_fun,
+           keyhashfun: keyhashfun
          }
        ) do
     # assumptions here
@@ -689,7 +714,7 @@ defmodule DetsPlus do
 
         # Ensuring hash function sort order
         new_dataset =
-          parallel_hash(hash_fun, new_dataset)
+          parallel_hash(keyhashfun, new_dataset)
           |> Enum.sort_by(fn {hash, _object} -> hash end, :asc)
 
         stats = add_stats(stats, :ets_sort)
@@ -753,17 +778,17 @@ defmodule DetsPlus do
   @min_chunk_size 10_000
   @max_tasks 4
   @doc false
-  def parallel_hash(hashfun, new_dataset, tasks \\ 1) do
+  def parallel_hash(keyhashfun, new_dataset, tasks \\ 1) do
     len = length(new_dataset)
 
     if len > @min_chunk_size and tasks < @max_tasks do
       {a, b} = Enum.split(new_dataset, div(len, 2))
-      task = Task.async(fn -> parallel_hash(hashfun, a, tasks * 2) end)
-      result = parallel_hash(hashfun, b, tasks * 2)
+      task = Task.async(fn -> parallel_hash(keyhashfun, a, tasks * 2) end)
+      result = parallel_hash(keyhashfun, b, tasks * 2)
       Task.await(task, :infinity) ++ result
     else
-      Enum.map(new_dataset, fn {_key, object} ->
-        {hashfun.(object), object}
+      Enum.map(new_dataset, fn {key, object} ->
+        {keyhashfun.(key), object}
       end)
     end
   end
@@ -1041,42 +1066,20 @@ defmodule DetsPlus do
       case new_entry_hash do
         # reached end of new_dataset
         nil ->
-          iterate(hash_fun, fun.(acc, entry_hash, old_entry, nil), [], new_file_reader, fun)
+          {:cont, entry_hash, old_entry, nil, [], new_file_reader}
 
         # replacing an old entry with a new entry
         ^entry_hash ->
           # LATER - ensure there is no hash collision
-          bin = :erlang.term_to_binary(new_entry)
-
-          iterate(
-            hash_fun,
-            fun.(acc, new_entry_hash, bin, new_entry),
-            tl(new_dataset),
-            new_file_reader,
-            fun
-          )
+          {:cont, new_entry_hash, nil, new_entry, tl(new_dataset), new_file_reader}
 
         # inserting the new entry before the old
         new_entry_hash when new_entry_hash < entry_hash ->
-          bin = :erlang.term_to_binary(new_entry)
-
-          iterate(
-            hash_fun,
-            fun.(acc, new_entry_hash, bin, new_entry),
-            tl(new_dataset),
-            file_reader,
-            fun
-          )
+          {:cont, new_entry_hash, nil, new_entry, tl(new_dataset), file_reader}
 
         # inserting the old entry before the new
         new_entry_hash when new_entry_hash > entry_hash ->
-          iterate(
-            hash_fun,
-            fun.(acc, entry_hash, old_entry, nil),
-            new_dataset,
-            new_file_reader,
-            fun
-          )
+          {:cont, entry_hash, old_entry, nil, new_dataset, new_file_reader}
       end
     else
       _ ->
@@ -1085,9 +1088,20 @@ defmodule DetsPlus do
           {:done, acc}
         else
           # reached end of file for the old file
-          bin = :erlang.term_to_binary(new_entry)
-          iterate(hash_fun, fun.(acc, new_entry_hash, bin, new_entry), tl(new_dataset), nil, fun)
+          {:cont, new_entry_hash, nil, new_entry, tl(new_dataset), nil}
         end
+    end
+    |> case do
+      {:cont, _entry_hash, _entry_bin, :delete, new_dataset, file_reader} ->
+        iterate(hash_fun, {:cont, acc}, new_dataset, file_reader, fun)
+
+      {:cont, entry_hash, entry_bin, entry_term, new_dataset, file_reader} ->
+        entry_bin = entry_bin || :erlang.term_to_binary(entry_term)
+        acc = fun.(acc, entry_hash, entry_bin, entry_term)
+        iterate(hash_fun, acc, new_dataset, file_reader, fun)
+
+      {:done, acc} ->
+        {:done, acc}
     end
   end
 
@@ -1220,7 +1234,7 @@ defimpl Enumerable, for: DetsPlus do
   def member?(_pid, _key), do: {:error, __MODULE__}
   def slice(_pid), do: {:error, __MODULE__}
 
-  def reduce(%DetsPlus{pid: pid, ets: ets}, acc, fun) do
+  def reduce(%DetsPlus{pid: pid, ets: ets, keyhashfun: keyhashfun}, acc, fun) do
     new_data1 = :ets.tab2list(ets)
     {new_data2, filename, hash_fun} = GenServer.call(pid, :get_reduce_state)
 
@@ -1237,7 +1251,7 @@ defimpl Enumerable, for: DetsPlus do
 
     # Ensuring hash function sort order
     {new_dataset, _} =
-      DetsPlus.parallel_hash(hash_fun, new_data1 ++ new_data2)
+      DetsPlus.parallel_hash(keyhashfun, new_data1 ++ new_data2)
       |> Enum.sort_by(fn {hash, _tuple} -> hash end, :desc)
       |> Enum.reduce({[], nil}, fn {hash, object}, {ret, prev} ->
         if prev != hash do
