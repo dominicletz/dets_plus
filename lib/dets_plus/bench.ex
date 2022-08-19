@@ -1,6 +1,16 @@
 defmodule DetsPlus.Bench do
   @moduledoc false
 
+  @to_be_hashed :rand.bytes(256)
+  def hash_test(algo, test_size) do
+    _ =
+      Enum.reduce(0..test_size, @to_be_hashed, fn _x, bin ->
+        :crypto.hash(algo, bin)
+      end)
+
+    :ok
+  end
+
   def bloom_test(module, test_size) do
     bloom = module.create(test_size * 10)
 
@@ -159,5 +169,25 @@ defmodule DetsPlus.Bench do
 
     context = %{rounds: 3, modules: [DetsPlus.Bloom], prepare: nil, test_size: 1_500_000}
     run(context, "bloom", &bloom_test/2)
+
+    hashes = [
+      :ripemd160,
+      :sha,
+      :sha224,
+      :sha256,
+      :sha384,
+      :sha512,
+      :sha3_224,
+      :sha3_256,
+      :sha3_384,
+      :sha3_512,
+      :blake2b,
+      :blake2s,
+      :md5,
+      :md4
+    ]
+
+    context = %{rounds: 3, modules: hashes, prepare: nil, test_size: 1_500_000}
+    run(context, "hash", &hash_test/2)
   end
 end
