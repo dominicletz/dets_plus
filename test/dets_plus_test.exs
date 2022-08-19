@@ -3,8 +3,7 @@ defmodule DetsPlus.Test do
 
   describe "open_file" do
     test "check for overlapping buckets" do
-      File.rm("test_file")
-      {:ok, dets} = DetsPlus.open_file(:test_file)
+      dets = open_dets("test_file")
 
       range = 1..5000
 
@@ -37,30 +36,8 @@ defmodule DetsPlus.Test do
       end
     end
 
-    # test "check compression" do
-    #   File.rm("test_file.gz")
-    #   {:ok, dets} = DetsPlus.open_file(:test_file, file: "test_file.gz")
-
-    #   range = 1..16
-
-    #   for x <- range do
-    #     assert DetsPlus.insert(dets, {x}) == true
-    #   end
-
-    #   for x <- range do
-    #     assert DetsPlus.lookup(dets, x) == [{x}]
-    #   end
-
-    #   DetsPlus.sync(dets)
-
-    #   for x <- range do
-    #     assert DetsPlus.lookup(dets, x) == [{x}]
-    #   end
-    # end
-
     test "creates new database and writes values" do
-      File.rm("test_file2")
-      {:ok, dets} = DetsPlus.open_file(:test_file2)
+      dets = open_dets("test_file2")
 
       assert DetsPlus.info(dets, :size) == 0
       assert DetsPlus.lookup(dets, 1) == []
@@ -98,8 +75,7 @@ defmodule DetsPlus.Test do
     end
 
     test "member" do
-      File.rm("test_file3")
-      {:ok, dets} = DetsPlus.open_file(:test_file3)
+      dets = open_dets("test_file3")
 
       assert DetsPlus.member?(dets, 1) == false
       assert DetsPlus.insert(dets, {1, 1, 1}) == :ok
@@ -107,8 +83,7 @@ defmodule DetsPlus.Test do
     end
 
     test "keypos != 1" do
-      File.rm("test_file4")
-      {:ok, dets} = DetsPlus.open_file(:test_file4, keypos: 2)
+      dets = open_dets("test_file4", keypos: 2)
 
       assert DetsPlus.info(dets, :size) == 0
       assert DetsPlus.lookup(dets, 1) == []
@@ -173,8 +148,7 @@ defmodule DetsPlus.Test do
     end
 
     test "map storage" do
-      File.rm("test_file6")
-      {:ok, dets} = DetsPlus.open_file(:test_file6, keypos: :id)
+      dets = open_dets("test_file6", keypos: :id)
       DetsPlus.insert(dets, %{id: 1, value: 42})
       [%{id: 1, value: 42}] = DetsPlus.lookup(dets, 1)
       :ok = DetsPlus.close(dets)
@@ -190,6 +164,28 @@ defmodule DetsPlus.Test do
       writer = FileWriter.write(writer, "abcdefghijklmnopqrstuvw")
       FileWriter.sync(writer)
       assert PagedFile.pread(fp, 0, 10) == {:ok, "abcde67890"}
+    end
+
+    test "delete" do
+      dets = open_dets("test_file8")
+
+      assert Enum.to_list(dets) == []
+      assert DetsPlus.delete(dets, 1) == :ok
+      assert DetsPlus.insert(dets, {1, 1, 1}) == :ok
+      assert Enum.to_list(dets) == [{1, 1, 1}]
+      assert DetsPlus.delete(dets, 1) == :ok
+      assert Enum.to_list(dets) == []
+
+      assert DetsPlus.insert(dets, {1, 1, 1}) == :ok
+      assert Enum.to_list(dets) == [{1, 1, 1}]
+      assert DetsPlus.delete_object(dets, {1, 1, 1}) == :ok
+      assert Enum.to_list(dets) == []
+    end
+
+    defp open_dets(name, args \\ []) do
+      File.rm(name)
+      {:ok, dets} = DetsPlus.open_file(String.to_atom(name), args)
+      dets
     end
   end
 end

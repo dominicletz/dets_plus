@@ -56,7 +56,6 @@ DetsPlus.insert(dets, %{id: 1, value: 42})
 
 ## Ideas for PRs and future improvements
 
-- Add the `delete_object/2` function
 - Add `update_counter/3`
 - Add support for `bag` and `sorted_set`/`ordered_set`
 - Maybe Add `match()/select()` - no idea how to do that efficiently though?
