@@ -502,8 +502,7 @@ defmodule DetsPlus do
         _from,
         state = %State{sync_fallback: fallback, filename: filename}
       ) do
-    new_data2 = Map.to_list(fallback)
-    {:reply, {new_data2, filename}, state}
+    {:reply, {fallback, filename}, state}
   end
 
   def handle_call(
@@ -713,11 +712,8 @@ defmodule DetsPlus do
         send(dets, :continue)
 
         # Ensuring hash function sort order
-        new_dataset =
-          parallel_hash(keyhashfun, new_dataset)
-          |> Enum.sort_by(fn {hash, _object} -> hash end, :asc)
-
-        stats = add_stats(stats, :ets_sort)
+        new_dataset = parallel_hash(keyhashfun, new_dataset)
+        stats = add_stats(stats, :ets_hash)
 
         old_file =
           if fp != nil do
@@ -785,11 +781,12 @@ defmodule DetsPlus do
       {a, b} = Enum.split(new_dataset, div(len, 2))
       task = Task.async(fn -> parallel_hash(keyhashfun, a, tasks * 2) end)
       result = parallel_hash(keyhashfun, b, tasks * 2)
-      Task.await(task, :infinity) ++ result
+      :lists.merge(Task.await(task, :infinity), result)
     else
       Enum.map(new_dataset, fn {key, object} ->
         {{keyhashfun.(key), key}, object}
       end)
+      |> :lists.sort()
     end
   end
 
@@ -1264,8 +1261,12 @@ defimpl Enumerable, for: DetsPlus do
   def slice(_pid), do: {:error, __MODULE__}
 
   def reduce(%DetsPlus{pid: pid, ets: ets, keyhashfun: keyhashfun, keyfun: keyfun}, acc, fun) do
-    new_data1 = :ets.tab2list(ets)
+    new_data =
+      :ets.tab2list(ets)
+      |> Enum.reduce(%{}, fn {key, object}, map -> Map.put(map, key, object) end)
+
     {new_data2, filename} = GenServer.call(pid, :get_reduce_state)
+    new_data = Map.merge(new_data, new_data2)
 
     opts = [page_size: 1_000_000, max_pages: 1000]
 
@@ -1279,16 +1280,7 @@ defimpl Enumerable, for: DetsPlus do
       end
 
     # Ensuring hash function sort order
-    {new_dataset, _} =
-      DetsPlus.parallel_hash(keyhashfun, new_data1 ++ new_data2)
-      |> Enum.sort_by(fn {hashnkey, _tuple} -> hashnkey end, :desc)
-      |> Enum.reduce({[], nil}, fn {hashnkey, object}, {ret, prev} ->
-        if prev != hashnkey do
-          {[{hashnkey, object} | ret], hashnkey}
-        else
-          {ret, hashnkey}
-        end
-      end)
+    new_dataset = DetsPlus.parallel_hash(keyhashfun, Map.to_list(new_data))
 
     ret =
       DetsPlus.iterate(keyfun, acc, new_dataset, old_file, fn acc,
