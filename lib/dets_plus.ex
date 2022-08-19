@@ -500,10 +500,10 @@ defmodule DetsPlus do
   def handle_call(
         :get_reduce_state,
         _from,
-        state = %State{sync_fallback: fallback, filename: filename, hashfun: hash_fun}
+        state = %State{sync_fallback: fallback, filename: filename}
       ) do
     new_data2 = Map.to_list(fallback)
-    {:reply, {new_data2, filename, hash_fun}, state}
+    {:reply, {new_data2, filename}, state}
   end
 
   def handle_call(
@@ -696,8 +696,8 @@ defmodule DetsPlus do
            fp: fp,
            filename: filename,
            file_entries: file_entries,
-           hashfun: hash_fun,
-           keyhashfun: keyhashfun
+           keyhashfun: keyhashfun,
+           keyfun: keyfun
          }
        ) do
     # assumptions here
@@ -745,7 +745,7 @@ defmodule DetsPlus do
 
         # This starts of the file_reader sending entry data to above the future_* workers
         pids = [future_bloom.pid, future_entries.pid, future_state.pid]
-        async_iterate_produce(hash_fun, new_dataset, old_file, pids)
+        async_iterate_produce(keyfun, new_dataset, old_file, pids)
 
         state = Task.await(future_state, :infinity)
         {bloom, bloom_size} = Task.await(future_bloom, :infinity)
@@ -788,7 +788,7 @@ defmodule DetsPlus do
       Task.await(task, :infinity) ++ result
     else
       Enum.map(new_dataset, fn {key, object} ->
-        {keyhashfun.(key), object}
+        {{keyhashfun.(key), key}, object}
       end)
     end
   end
@@ -811,8 +811,11 @@ defmodule DetsPlus do
     entries = EntryWriter.new(filename, estimated_entry_count)
 
     {entries, _offset} =
-      async_iterate_consume({entries, 4}, fn {entries, offset}, entry_hash, entry, _ ->
-        size = byte_size(entry)
+      async_iterate_consume({entries, 4}, fn {entries, offset},
+                                             entry_hash,
+                                             entry_bin,
+                                             _entry_term ->
+        size = byte_size(entry_bin)
         table_idx = table_idx(entry_hash)
 
         entries =
@@ -838,18 +841,18 @@ defmodule DetsPlus do
         {state, writer},
         fn {state = %State{file_entries: file_entries, slot_counts: slot_counts}, writer},
            entry_hash,
-           entry,
-           _ ->
+           entry_bin,
+           _entry_term ->
           table_idx = table_idx(entry_hash)
           slot_counts = Map.update(slot_counts, table_idx, 1, fn count -> count + 1 end)
           state = %State{state | file_entries: file_entries + 1, slot_counts: slot_counts}
-          size = byte_size(entry)
+          size = byte_size(entry_bin)
 
           writer =
             FileWriter.write(
               writer,
               <<entry_hash::binary-size(@hash_size), size::unsigned-size(@entry_size_size_bits),
-                entry::binary()>>
+                entry_bin::binary()>>
             )
 
           {:cont, {state, writer}}
@@ -983,16 +986,16 @@ defmodule DetsPlus do
   end
 
   defp async_iterate_produce(
-         hash_fun,
+         keyfun,
          new_dataset,
          file_reader,
          targets
        ) do
     spawn_link(fn ->
-      init_acc = {:cont, {[], 0, targets}}
+      init_acc = {[], 0, targets, 0}
 
-      {:done, {items, _item_count, _targets}} =
-        iterate(hash_fun, init_acc, new_dataset, file_reader, &async_iterator/4)
+      {:done, {items, _item_count, _targets, _byte_count}} =
+        iterate(keyfun, {:cont, init_acc}, new_dataset, file_reader, &async_iterator/4)
 
       for pid <- targets do
         send(pid, {:entries, Enum.reverse(items)})
@@ -1001,18 +1004,28 @@ defmodule DetsPlus do
     end)
   end
 
-  defp async_iterator({items, item_count, targets}, entry_hash, binary_entry, term_entry) do
+  defp async_iterator(state, _entry_hash, _binary_entry, :delete) do
+    {:cont, state}
+  end
+
+  defp async_iterator(
+         {items, item_count, targets, byte_count},
+         entry_hash,
+         binary_entry,
+         term_entry
+       ) do
     items = [{entry_hash, binary_entry, term_entry} | items]
     item_count = item_count + 1
+    byte_count = byte_count + byte_size(binary_entry)
 
     if item_count > 128 do
       for pid <- targets do
         send(pid, {:entries, Enum.reverse(items)})
       end
 
-      {:cont, {[], 0, targets}}
+      {:cont, {[], 0, targets, byte_count}}
     else
-      {:cont, {items, item_count, targets}}
+      {:cont, {items, item_count, targets, byte_count}}
     end
   end
 
@@ -1030,78 +1043,94 @@ defmodule DetsPlus do
     end
   end
 
-  # this function takes a new_dataset and an old file and merges them, it calls
-  # on every entry the callback `fun.(acc, entry_hash, binary_entry, term_entry)` and returns the final acc
-  @doc false
-  def iterate(_hash_fun, {:halt, acc}, _new_dataset, _file_reader, _fun) do
-    {:halted, acc}
-  end
-
-  def iterate(
-        hash_fun,
-        {:cont, acc},
-        new_dataset,
-        file_reader,
-        fun
-      ) do
-    # Reading a new entry from the top of the dataset or nil
-    {new_entry, new_entry_hash} =
-      case new_dataset do
-        [{new_entry_hash, new_entry} | _rest] ->
-          {new_entry, new_entry_hash}
-
-        [] ->
-          {nil, nil}
-      end
-
-    # Reading a new entry from the file or falling back to else if there is no next
-    # entry in the file anymore
+  defp read_next_entry(file_reader) do
     with false <- file_reader == nil,
          {new_file_reader,
           <<entry_hash::binary-size(@hash_size), old_size::unsigned-size(@entry_size_size_bits)>>}
          when old_size > 0 <-
            FileReader.read(file_reader, @hash_size + @entry_size_size) do
-      {new_file_reader, old_entry} = FileReader.read(new_file_reader, old_size)
-
-      case new_entry_hash do
-        # reached end of new_dataset
-        nil ->
-          {:cont, entry_hash, old_entry, nil, [], new_file_reader}
-
-        # replacing an old entry with a new entry
-        ^entry_hash ->
-          # LATER - ensure there is no hash collision
-          {:cont, new_entry_hash, nil, new_entry, tl(new_dataset), new_file_reader}
-
-        # inserting the new entry before the old
-        new_entry_hash when new_entry_hash < entry_hash ->
-          {:cont, new_entry_hash, nil, new_entry, tl(new_dataset), file_reader}
-
-        # inserting the old entry before the new
-        new_entry_hash when new_entry_hash > entry_hash ->
-          {:cont, entry_hash, old_entry, nil, new_dataset, new_file_reader}
-      end
+      {file_reader, entry_bin} = FileReader.read(new_file_reader, old_size)
+      {file_reader, entry_hash, entry_bin}
     else
-      _ ->
-        # reached end of both lines
-        if new_entry == nil do
-          {:done, acc}
-        else
-          # reached end of file for the old file
-          {:cont, new_entry_hash, nil, new_entry, tl(new_dataset), nil}
-        end
+      _ -> nil
     end
-    |> case do
-      {:cont, _entry_hash, _entry_bin, :delete, new_dataset, file_reader} ->
-        iterate(hash_fun, {:cont, acc}, new_dataset, file_reader, fun)
+  end
 
-      {:cont, entry_hash, entry_bin, entry_term, new_dataset, file_reader} ->
-        entry_bin = entry_bin || :erlang.term_to_binary(entry_term)
-        acc = fun.(acc, entry_hash, entry_bin, entry_term)
-        iterate(hash_fun, acc, new_dataset, file_reader, fun)
+  # this function takes a new_dataset and an old file and merges them, it calls
+  # on every entry the callback `fun.(acc, entry_hash, binary_entry, term_entry)` and returns the final acc
+  @doc false
+  def iterate(keyfun, {:cont, acc}, new_dataset, file_reader, fun) do
+    do_iterate(keyfun, {:cont, acc}, new_dataset, read_next_entry(file_reader), fun)
+  end
 
-      {:done, acc} ->
-        {:done, acc}
+  defp do_iterate(_keyfun, {:halt, acc}, _new_dataset, _old_dataset, _fun) do
+    {:halted, acc}
+  end
+
+  # Nothing left
+  defp do_iterate(_keyfun, {:cont, acc}, [], nil, _fun) do
+    {:done, acc}
+  end
+
+  # Only old entries left
+  defp do_iterate(keyfun, {:cont, acc}, [], {fr, entry_hash, entry_bin}, fun) do
+    acc = fun.(acc, entry_hash, entry_bin, nil)
+    do_iterate(keyfun, acc, [], read_next_entry(fr), fun)
+  end
+
+  # Only new entries left
+  defp do_iterate(keyfun, {:cont, acc}, new_dataset, nil, fun) do
+    {{entry_hash, _entry_key}, entry_term} = hd(new_dataset)
+    entry_bin = :erlang.term_to_binary(entry_term)
+    acc = fun.(acc, entry_hash, entry_bin, entry_term)
+    do_iterate(keyfun, acc, tl(new_dataset), nil, fun)
+  end
+
+  # Both types are still there
+  defp do_iterate(keyfun, {:cont, acc}, new_dataset, {fr, old_entry_hash, old_entry_bin}, fun) do
+    # Reading a new entry from the top of the dataset
+    {{new_entry_hash, new_entry_key}, new_entry_term} = hd(new_dataset)
+
+    # Reading a new entry from the file or falling back to else if there is no next
+    # entry in the file anymore
+    case compare(keyfun, {new_entry_hash, new_entry_key}, {old_entry_hash, old_entry_bin}) do
+      :equal ->
+        entry_bin = :erlang.term_to_binary(new_entry_term)
+        acc = fun.(acc, new_entry_hash, entry_bin, new_entry_term)
+        do_iterate(keyfun, acc, tl(new_dataset), read_next_entry(fr), fun)
+
+      :new ->
+        entry_bin = :erlang.term_to_binary(new_entry_term)
+        acc = fun.(acc, new_entry_hash, entry_bin, new_entry_term)
+        do_iterate(keyfun, acc, tl(new_dataset), {fr, old_entry_hash, old_entry_bin}, fun)
+
+      :old ->
+        acc = fun.(acc, old_entry_hash, old_entry_bin, nil)
+        do_iterate(keyfun, acc, new_dataset, read_next_entry(fr), fun)
+    end
+  end
+
+  defp compare(
+         keyfun,
+         {new_entry_hash, new_entry_key},
+         {old_entry_hash, old_entry_bin}
+       ) do
+    case {new_entry_hash, old_entry_hash} do
+      {same, same} ->
+        # hash collision should be really seldom, or this is going to be expensive
+        old_entry_key = keyfun.(:erlang.binary_to_term(old_entry_bin))
+
+        case {new_entry_key, old_entry_key} do
+          {same, same} -> :equal
+          {new, old} when new < old -> :new
+          {new, old} when new > old -> :old
+        end
+
+      {new, old} when new < old ->
+        :new
+
+      {new, old} when new > old ->
+        :old
     end
   end
 
@@ -1234,9 +1263,9 @@ defimpl Enumerable, for: DetsPlus do
   def member?(_pid, _key), do: {:error, __MODULE__}
   def slice(_pid), do: {:error, __MODULE__}
 
-  def reduce(%DetsPlus{pid: pid, ets: ets, keyhashfun: keyhashfun}, acc, fun) do
+  def reduce(%DetsPlus{pid: pid, ets: ets, keyhashfun: keyhashfun, keyfun: keyfun}, acc, fun) do
     new_data1 = :ets.tab2list(ets)
-    {new_data2, filename, hash_fun} = GenServer.call(pid, :get_reduce_state)
+    {new_data2, filename} = GenServer.call(pid, :get_reduce_state)
 
     opts = [page_size: 1_000_000, max_pages: 1000]
 
@@ -1252,21 +1281,25 @@ defimpl Enumerable, for: DetsPlus do
     # Ensuring hash function sort order
     {new_dataset, _} =
       DetsPlus.parallel_hash(keyhashfun, new_data1 ++ new_data2)
-      |> Enum.sort_by(fn {hash, _tuple} -> hash end, :desc)
-      |> Enum.reduce({[], nil}, fn {hash, object}, {ret, prev} ->
-        if prev != hash do
-          {[{hash, object} | ret], hash}
+      |> Enum.sort_by(fn {hashnkey, _tuple} -> hashnkey end, :desc)
+      |> Enum.reduce({[], nil}, fn {hashnkey, object}, {ret, prev} ->
+        if prev != hashnkey do
+          {[{hashnkey, object} | ret], hashnkey}
         else
-          {ret, hash}
+          {ret, hashnkey}
         end
       end)
 
     ret =
-      DetsPlus.iterate(hash_fun, acc, new_dataset, old_file, fn acc,
-                                                                _entry_hash,
-                                                                entry_blob,
-                                                                entry ->
-        fun.(entry || :erlang.binary_to_term(entry_blob), acc)
+      DetsPlus.iterate(keyfun, acc, new_dataset, old_file, fn acc,
+                                                              _entry_hash,
+                                                              entry_blob,
+                                                              entry ->
+        if entry != :delete do
+          fun.(entry || :erlang.binary_to_term(entry_blob), acc)
+        else
+          {:cont, acc}
+        end
       end)
 
     if fp != nil, do: PagedFile.close(fp)
