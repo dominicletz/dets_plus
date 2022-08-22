@@ -995,7 +995,7 @@ defmodule DetsPlus do
         iterate(keyfun, {:cont, init_acc}, new_dataset, file_reader, &async_iterator/4)
 
       for pid <- targets do
-        send(pid, {:entries, Enum.reverse(items)})
+        send(pid, {:entries, self(), Enum.reverse(items)})
         send(pid, :done)
       end
     end)
@@ -1005,19 +1005,34 @@ defmodule DetsPlus do
     {:cont, state}
   end
 
+  @async_send_buffer_size 10_000_000
+  @async_send_buffer_trigger div(10_000_000, 2)
   defp async_iterator(
          {items, item_count, targets, byte_count},
          entry_hash,
-         binary_entry,
-         term_entry
+         entry_bin,
+         entry_term
        ) do
-    items = [{entry_hash, binary_entry, term_entry} | items]
+    items = [{entry_hash, entry_bin, entry_term} | items]
     item_count = item_count + 1
-    byte_count = byte_count + byte_size(binary_entry)
+
+    byte_count =
+      if byte_count + byte_size(entry_bin) >= @async_send_buffer_size and
+           byte_count < @async_send_buffer_size do
+        for pid <- targets do
+          receive do
+            {^pid, :continue} -> :ok
+          end
+        end
+
+        byte_count + byte_size(entry_bin) - @async_send_buffer_size
+      else
+        byte_count + byte_size(entry_bin)
+      end
 
     if item_count > 128 do
       for pid <- targets do
-        send(pid, {:entries, Enum.reverse(items)})
+        send(pid, {:entries, self(), Enum.reverse(items)})
       end
 
       {:cont, {[], 0, targets, byte_count}}
@@ -1026,35 +1041,50 @@ defmodule DetsPlus do
     end
   end
 
-  defp async_iterate_consume(acc, fun) do
+  defp async_iterate_consume(acc, fun, byte_count0 \\ 0) do
     receive do
-      {:entries, entries} ->
-        Enum.reduce(entries, acc, fn {entry_hash, binary_entry, term_entry}, acc ->
-          {:cont, acc} = fun.(acc, entry_hash, binary_entry, term_entry)
-          acc
-        end)
-        |> async_iterate_consume(fun)
+      {:entries, producer, entries} ->
+        {acc, byte_count} =
+          Enum.reduce(entries, {acc, byte_count0}, fn {entry_hash, entry_bin, entry_term},
+                                                      {acc, byte_count} ->
+            byte_count = byte_count + byte_size(entry_bin)
+            {:cont, acc} = fun.(acc, entry_hash, entry_bin, entry_term)
+            {acc, byte_count}
+          end)
+
+        byte_count =
+          if byte_count >= @async_send_buffer_trigger and
+               byte_count0 < @async_send_buffer_trigger do
+            send(producer, {self(), :continue})
+            byte_count - @async_send_buffer_size
+          else
+            byte_count
+          end
+
+        async_iterate_consume(acc, fun, byte_count)
 
       :done ->
         acc
     end
   end
 
+  defp read_next_entry(nil), do: nil
+
   defp read_next_entry(file_reader) do
-    with false <- file_reader == nil,
-         {new_file_reader,
-          <<entry_hash::binary-size(@hash_size), old_size::unsigned-size(@entry_size_size_bits)>>}
-         when old_size > 0 <-
-           FileReader.read(file_reader, @hash_size + @entry_size_size) do
-      {file_reader, entry_bin} = FileReader.read(new_file_reader, old_size)
-      {file_reader, entry_hash, entry_bin}
-    else
-      _ -> nil
+    case FileReader.read(file_reader, @hash_size + @entry_size_size) do
+      {_new_file_reader,
+       <<0::unsigned-size(@hash_size_bits), 0::unsigned-size(@entry_size_size_bits)>>} ->
+        nil
+
+      {new_file_reader,
+       <<entry_hash::binary-size(@hash_size), old_size::unsigned-size(@entry_size_size_bits)>>} ->
+        {file_reader, entry_bin} = FileReader.read(new_file_reader, old_size)
+        {file_reader, entry_hash, entry_bin}
     end
   end
 
   # this function takes a new_dataset and an old file and merges them, it calls
-  # on every entry the callback `fun.(acc, entry_hash, binary_entry, term_entry)` and returns the final acc
+  # on every entry the callback `fun.(acc, entry_hash, entry_bin, entry_term)` and returns the final acc
   @doc false
   def iterate(keyfun, {:cont, acc}, new_dataset, file_reader, fun) do
     do_iterate(keyfun, {:cont, acc}, new_dataset, read_next_entry(file_reader), fun)

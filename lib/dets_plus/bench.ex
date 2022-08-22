@@ -48,23 +48,45 @@ defmodule DetsPlus.Bench do
   end
 
   def prepare_read_test(module, test_size) do
-    filename = 'test_file_dets_read_bench.#{module}'
+    filename = 'test_file_dets_read_bench_#{test_size}.#{module}'
 
     if File.exists?(filename) do
       :ok
     else
       {:ok, dets} = module.open_file(:test_file_dets_read_bench, file: filename)
 
-      for x <- 0..test_size do
-        :ok = module.insert(dets, {x, x * x})
+      sync_size = 10_000_000
+      step_size = 100
+
+      for x <- 0..div(test_size, step_size) do
+        i = x * step_size
+
+        objects =
+          for y <- 1..step_size do
+            {i + y, 2 * (i + y)}
+          end
+
+        if x > 0 and rem(x * step_size, sync_size) == 0 do
+          module.start_sync(dets)
+        end
+
+        :ok = module.insert(dets, objects)
       end
 
       :ok = module.close(dets)
     end
   end
 
+  def iterate_test(_, module, test_size) do
+    filename = 'test_file_dets_read_bench_#{test_size}.#{module}'
+    {:ok, dets} = module.open_file(:test_file_dets_bench, file: filename)
+    ret = module.reduce(dets, 0, fn _, x -> x + 1 end)
+    IO.puts("iterated: #{ret} items")
+    :ok = module.close(dets)
+  end
+
   def read_test(_, module, test_size) do
-    filename = 'test_file_dets_read_bench.#{module}'
+    filename = 'test_file_dets_read_bench_#{test_size}.#{module}'
     {:ok, dets} = module.open_file(:test_file_dets_bench, file: filename)
 
     for x <- 0..test_size do
