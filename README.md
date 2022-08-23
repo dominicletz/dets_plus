@@ -29,8 +29,9 @@ Limits are:
 - `:dets` is limited to 2gb of data `DetsPlus` has no such limit.
 - `DetsPlus` supports the `Enumerable` protocol. So you can call `Enum.reduce()` on it.
 - `DetsPlus` supports Maps and Structs in addition to tuples when `keypos` is an atom (name of the key field).
-- `DetsPlus` is SLOWER in reading than `:dets` because it goes to disk for that. 
-- Only type = `:set` is supported
+- `DetsPlus` is SLOWER in reading than `:dets` because `DetsPlus` reads from disk. 
+- `DetsPlus` updates it's CDB database atomically making it more resistant to power failures such as in Nerves.
+- Only the type = `:set` is supported at the moment
 
 The `:dets` limitation of 2gb caused me to create this library. I needed to store and lookup key-value pairs from sets larger than what fits into memory. Thus the current implementation did not try to be equivalent to `:dets` nor to be complete. Instead it's focused on storing large amounts of values and have fast lookups. PRs to make it more complete and use it for other things are welcome. 
 
@@ -67,7 +68,7 @@ The package can be installed by adding `dets_plus` to your list of dependencies 
 ```elixir
 def deps do
   [
-    {:dets_plus, "~> 2.0"}
+    {:dets_plus, "~> 2.1"}
   ]
 end
 ```

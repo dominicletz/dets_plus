@@ -7,14 +7,17 @@ defmodule DetsPlus do
   internal ETS table and synced every `auto_save` period
   to the persistent storage.
 
-  While `sync()` or `auto_save` is in progress the database
-  can still read and written.
+  While `sync()` or `auto_save` are in progress the database
+  is still readable and writeable.
 
   There is no commitlog so not synced writes are lost.
   Lookups are possible by key and non-matches are accelerated
   using a bloom filter. The persistent file concept follows
   DJ Bernsteins CDB database format, but uses an Elixir
-  encoded header https://cr.yp.to/cdb.html
+  encoded header https://cr.yp.to/cdb.html. When syncing
+  a new CDB database file is created and replaces
+  the old CDB atomically file using `File.rename!` so
+  database corruptions are not possible from incomplete updates.
 
   Limits are:
   - Total file size: 18_446 Petabyte
@@ -717,7 +720,7 @@ defmodule DetsPlus do
 
         old_file =
           if fp != nil do
-            FileReader.new(fp, byte_size("DET+"), module: PagedFile, buffer_size: 512_000)
+            FileReader.new(fp, byte_size("DET+"), module: PagedFile, buffer_size: 100_000)
           else
             nil
           end
