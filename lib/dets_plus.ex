@@ -514,11 +514,14 @@ defmodule DetsPlus do
     {:reply, {fallback, filename}, state}
   end
 
+  # this needs to be configured...
+  @memory_valve 1_000_000_000
   def handle_call(
         {:insert, objects},
         from,
         state = %State{
           ets: ets,
+          ets_memory: ets_memory,
           sync: sync,
           sync_fallback: fallback,
           sync_fallback_memory: fallback_memory,
@@ -527,7 +530,16 @@ defmodule DetsPlus do
       ) do
     if sync == nil do
       :ets.insert(ets, objects)
-      {:reply, :ok, check_auto_save(state, estimate_size(objects))}
+      ets_memory = ets_memory + estimate_size(objects)
+
+      sync =
+        sync ||
+          if ets_memory > @memory_valve and sync == nil do
+            spawn_sync_worker(state)
+          end
+
+      state = %State{state | ets_memory: ets_memory, sync: sync}
+      {:reply, :ok, state}
     else
       fallback =
         Enum.reduce(objects, fallback, fn {key, object}, fallback ->
@@ -537,7 +549,7 @@ defmodule DetsPlus do
       fallback_memory = fallback_memory + estimate_size(objects)
       state = %State{state | sync_fallback: fallback, sync_fallback_memory: fallback_memory}
 
-      if fallback_memory > 100_000_000 do
+      if fallback_memory > @memory_valve do
         # this pause exists to protect from out_of_memory situations when the writer can't
         # finish in time
         Logger.warn(
@@ -698,17 +710,6 @@ defmodule DetsPlus do
       end
 
     {:noreply, %State{state | sync: sync}}
-  end
-
-  defp check_auto_save(state = %State{ets_memory: ets_memory, sync: sync}, n) do
-    ets_memory = ets_memory + n
-
-    if ets_memory > 100_000_000 and sync == nil do
-      sync = spawn_sync_worker(state)
-      %State{state | sync: sync, ets_memory: ets_memory}
-    end
-
-    %State{state | ets_memory: ets_memory}
   end
 
   defp estimate_size(term, depth \\ 0) do
