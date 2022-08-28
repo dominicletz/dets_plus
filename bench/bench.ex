@@ -179,7 +179,7 @@ defmodule DetsPlus.Bench do
   def run() do
     # :observer.start()
 
-    context = %{rounds: 3, modules: [:dets, DetsPlus], prepare: nil, test_size: 50_000}
+    context = %{rounds: 3, modules: [CubDBWrap, :dets, DetsPlus], prepare: nil, test_size: 50_000}
     run(context, "write", &write_test/2)
     run(context, "rw", &test/2)
     run(%{context | prepare: &prepare_read_test/2}, "read", &read_test/3)

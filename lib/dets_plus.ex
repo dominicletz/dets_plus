@@ -62,6 +62,7 @@ defmodule DetsPlus do
       :fp,
       :name,
       :ets,
+      :ets_memory,
       :mode,
       :auto_save,
       :keypos,
@@ -77,6 +78,7 @@ defmodule DetsPlus do
       :file_size,
       :header_size,
       :sync_fallback,
+      :sync_fallback_memory,
       :creation_stats
     ]
   end
@@ -126,7 +128,8 @@ defmodule DetsPlus do
             file_size: 0,
             sync: nil,
             sync_waiters: [],
-            sync_fallback: %{}
+            sync_fallback: %{},
+            sync_fallback_memory: 0
           }
       end
       |> init_hashfuns()
@@ -176,7 +179,10 @@ defmodule DetsPlus do
     }
 
     {:ok, bloom} = PagedFile.pread(fp, bloom, header_offset - bloom)
+
     %State{state | bloom: bloom}
+    |> Map.put(:ets_memory, 0)
+    |> Map.put(:sync_fallback_memory, 0)
   end
 
   @wfile PagedFile
@@ -213,7 +219,7 @@ defmodule DetsPlus do
   end
 
   defp init_ets(state = %State{name: name, type: type}) do
-    %State{state | ets: :ets.new(name, [type])}
+    %State{state | ets: :ets.new(name, [type]), ets_memory: 0}
   end
 
   defp init_table_offsets(state = %State{slot_counts: slot_counts}, start_offset) do
@@ -515,28 +521,32 @@ defmodule DetsPlus do
           ets: ets,
           sync: sync,
           sync_fallback: fallback,
+          sync_fallback_memory: fallback_memory,
           sync_waiters: sync_waiters
         }
       ) do
     if sync == nil do
       :ets.insert(ets, objects)
-      {:reply, :ok, check_auto_save(state)}
+      {:reply, :ok, check_auto_save(state, estimate_size(objects))}
     else
       fallback =
         Enum.reduce(objects, fallback, fn {key, object}, fallback ->
           Map.put(fallback, key, object)
         end)
 
-      if map_size(fallback) > 1_000_000 do
+      fallback_memory = fallback_memory + estimate_size(objects)
+      state = %State{state | sync_fallback: fallback, sync_fallback_memory: fallback_memory}
+
+      if fallback_memory > 100_000_000 do
         # this pause exists to protect from out_of_memory situations when the writer can't
         # finish in time
         Logger.warn(
           "State flush slower than new inserts - pausing writes until flush is complete"
         )
 
-        {:noreply, %State{state | sync_fallback: fallback, sync_waiters: [from | sync_waiters]}}
+        {:noreply, %State{state | sync_waiters: [from | sync_waiters]}}
       else
-        {:reply, :ok, %State{state | sync_fallback: fallback}}
+        {:reply, :ok, state}
       end
     end
   end
@@ -661,7 +671,16 @@ defmodule DetsPlus do
       :ok = GenServer.reply(w, :ok)
     end
 
-    {:noreply, %State{new_state | fp: fp, sync: nil, sync_fallback: %{}, sync_waiters: []}}
+    {:noreply,
+     %State{
+       new_state
+       | fp: fp,
+         sync: nil,
+         sync_fallback: %{},
+         sync_fallback_memory: 0,
+         sync_waiters: [],
+         ets_memory: estimate_size(fallback)
+     }}
   end
 
   # this is pending sync finishing while a complete delete_all_objects has been executed on the state
@@ -681,8 +700,34 @@ defmodule DetsPlus do
     {:noreply, %State{state | sync: sync}}
   end
 
-  defp check_auto_save(state) do
-    state
+  defp check_auto_save(state = %State{ets_memory: ets_memory, sync: sync}, n) do
+    ets_memory = ets_memory + n
+
+    if ets_memory > 100_000_000 and sync == nil do
+      sync = spawn_sync_worker(state)
+      %State{state | sync: sync, ets_memory: ets_memory}
+    end
+
+    %State{state | ets_memory: ets_memory}
+  end
+
+  defp estimate_size(term, depth \\ 0) do
+    case term do
+      bin when is_binary(bin) ->
+        byte_size(bin)
+
+      num when is_number(num) ->
+        8
+
+      enum when is_map(enum) or is_list(enum) ->
+        Enum.reduce(enum, 0, fn term, size -> size + estimate_size(term, depth + 1) end)
+
+      tuple when is_tuple(tuple) ->
+        estimate_size(Tuple.to_list(tuple), depth)
+
+      atom when is_atom(atom) ->
+        8
+    end
   end
 
   defp add_stats({prev, stats}, label) do
@@ -985,6 +1030,8 @@ defmodule DetsPlus do
     end
   end
 
+  @async_send_buffer_size 10_000_000
+  @async_send_buffer_trigger div(10_000_000, 2)
   defp async_iterate_produce(
          keyfun,
          new_dataset,
@@ -992,7 +1039,7 @@ defmodule DetsPlus do
          targets
        ) do
     spawn_link(fn ->
-      init_acc = {[], 0, targets, 0}
+      init_acc = {[], 0, targets, -@async_send_buffer_trigger}
 
       {:done, {items, _item_count, _targets, _byte_count}} =
         iterate(keyfun, {:cont, init_acc}, new_dataset, file_reader, &async_iterator/4)
@@ -1008,8 +1055,6 @@ defmodule DetsPlus do
     {:cont, state}
   end
 
-  @async_send_buffer_size 10_000_000
-  @async_send_buffer_trigger div(10_000_000, 2)
   defp async_iterator(
          {items, item_count, targets, byte_count},
          entry_hash,
@@ -1018,29 +1063,30 @@ defmodule DetsPlus do
        ) do
     items = [{entry_hash, entry_bin, entry_term} | items]
     item_count = item_count + 1
+    byte_count = byte_count + byte_size(entry_bin)
 
-    byte_count =
-      if byte_count + byte_size(entry_bin) >= @async_send_buffer_size and
-           byte_count < @async_send_buffer_size do
-        for pid <- targets do
-          receive do
-            {^pid, :continue} -> :ok
-          end
-        end
-
-        byte_count + byte_size(entry_bin) - @async_send_buffer_size
-      else
-        byte_count + byte_size(entry_bin)
-      end
-
-    if item_count > 128 do
+    if item_count > 128 or byte_count >= @async_send_buffer_size do
       for pid <- targets do
         send(pid, {:entries, self(), Enum.reverse(items)})
       end
 
-      {:cont, {[], 0, targets, byte_count}}
+      {:cont, {[], 0, targets, await_processing(byte_count, targets)}}
     else
       {:cont, {items, item_count, targets, byte_count}}
+    end
+  end
+
+  defp await_processing(byte_count, targets) do
+    if byte_count >= @async_send_buffer_size do
+      for pid <- targets do
+        receive do
+          {^pid, :continue} -> :ok
+        end
+      end
+
+      await_processing(byte_count - @async_send_buffer_size, targets)
+    else
+      byte_count
     end
   end
 
@@ -1055,19 +1101,19 @@ defmodule DetsPlus do
             {acc, byte_count}
           end)
 
-        byte_count =
-          if byte_count >= @async_send_buffer_trigger and
-               byte_count0 < @async_send_buffer_trigger do
-            send(producer, {self(), :continue})
-            byte_count - @async_send_buffer_size
-          else
-            byte_count
-          end
-
-        async_iterate_consume(acc, fun, byte_count)
+        async_iterate_consume(acc, fun, confirm_processing(byte_count, producer))
 
       :done ->
         acc
+    end
+  end
+
+  defp confirm_processing(byte_count, producer) do
+    if byte_count >= @async_send_buffer_size do
+      send(producer, {self(), :continue})
+      confirm_processing(byte_count - @async_send_buffer_size, producer)
+    else
+      byte_count
     end
   end
 

@@ -20,7 +20,8 @@ defmodule DetsPlus.MixProject do
       aliases: aliases(),
       description: """
       Pure Elixir disk backed key-value store.
-      """
+      """,
+      elixirc_paths: if(Mix.env() == :dev, do: ["lib", "bench"], else: ["lib"])
     ]
   end
 
@@ -66,6 +67,8 @@ defmodule DetsPlus.MixProject do
       {:ex_doc, "~> 0.28", only: :dev, runtime: false},
       {:credo, "~> 1.6", only: [:dev, :test], runtime: false},
       {:dialyxir, "~> 1.2", only: [:dev], runtime: false},
+      {:cubdb, "~> 2.0", only: [:dev], runtime: false},
+      {:benchee, "~> 1.1", only: :dev, runtime: false},
       {:paged_file, "~> 1.0"}
       # {:paged_file, path: "../paged_file"}
     ]
