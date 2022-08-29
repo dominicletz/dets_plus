@@ -1,7 +1,6 @@
 defmodule DetsPlus.Bench.CubDBWrap do
-  @moduledoc """
-    Helper to make CubDB compatible with the `:dets` protocol
-  """
+  @moduledoc false
+  # Helper to make CubDB compatible with the `:dets` protocol
   def open_file(filename, args) do
     filename = Keyword.get(args, :file, filename)
     CubDB.start_link(data_dir: "#{filename}/", auto_compact: false, auto_file_sync: false)

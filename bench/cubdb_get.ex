@@ -1,4 +1,5 @@
 defmodule DetsPlus.Bench.CubDBGet do
+  @moduledoc false
   alias DetsPlus.Bench.{DetsWrap, DetsPlusWrap}
 
   def run() do

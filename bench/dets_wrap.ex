@@ -1,4 +1,5 @@
 defmodule DetsPlus.Bench.DetsWrap do
+  @moduledoc false
   def start_link(filename, _args) do
     :dets.open_file(__MODULE__, file: String.to_charlist(filename))
   end
