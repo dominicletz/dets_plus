@@ -75,59 +75,88 @@ end
 
 The docs can be found at [https://hexdocs.pm/dets_plus](https://hexdocs.pm/dets_plus).
 
-## Performance
+## Comparison to CubDB
 
-As mentioned above reading `DetsPlus` is slower than `:dets` because `DetsPlus` is reading from disk primarily. Here 
-some measurements:
+When implementing DetsPlus I wasn't aware of CubDB which is another pure Elixir implementation of a Key-Value-Store. CubDB is more mature and has more features -- so go with that one if you don't want to worry about stuff. BUT DetsPlus is based on DJBs hash table format and super fast, so if you're happy to ride the bleeding edge go for it
+
+Technical differences:
+- CubDB is using btrees / DetsPlus is using a hash table - reads and writes are faster
+- CubDB is ordered and allows range queries based on the order / DetsPlus not
+- CubDB has atomic transactions / DetsPlus not
+- CubDB is using an auto-append file format and has fine grained commit control / DetsPlus not, it has no incremental append and has to replace the whole file on sync.
+
+Performance differences
+- DetsPlus is significantly faster for reads and writes of most data because of it's hash table structure
+- For huge entries (>1mb per entry) CubDB is faster in writing because of it's incremental file structure
+
+## Performance Measurements
+
+The initial write/read-write/read tests are all executed on 50,000 small elements. Lower numbers are better:
 
 ```
 $ mix run scripts/bench.exs
 running write test: :dets
-4.792s
-4.869s
-4.861s
+4.915s
+4.754s
+4.767s
 running write test: DetsPlus
-1.223s
-1.098s
-1.001s
+1.092s
+1.078s
+1.161s
+running write test: DetsPlus.Bench.CubDBWrap
+32.054s
+30.963s
+31.279s
 
 running rw test: :dets
-4.2s
-3.118s
-3.485s
+3.375s
+3.306s
+3.357s
 running rw test: DetsPlus
-2.057s
-2.019s
-2.03s
+2.196s
+2.259s
+2.257s
+running rw test: DetsPlus.Bench.CubDBWrap
+22.771s
+20.924s
+20.854s
 
 running read test: :dets
-0.929s
-0.905s
-0.905s
+0.998s
+0.966s
+0.966s
 running read test: DetsPlus
-1.617s
-1.657s
-1.645s
+1.699s
+1.675s
+1.675s
+running read test: DetsPlus.Bench.CubDBWrap
+6.815s
+7.053s
+7.024s
+
+running large_write test: DetsPlus
+40.331s
+40.882s
+47.976s
+running large_write test: DetsPlus.Bench.CubDBWrap
+17.838s
+16.143s
+16.133s
 
 running sync_test: 0 + 150_000 new inserts test: DetsPlus
-0.577s
-0.599s
-0.609s
+0.672s
+0.632s
+0.683s
 
 running sync_test: 0 + 1_500_000 new inserts test: DetsPlus
-6.999s
-6.689s
-6.526s
+6.677s
+6.648s
+6.272s
 
 running sync_test 1_500_000 + 1 new inserts test: DetsPlus
-2.915s
-2.818s
-2.812s
-
-running bloom test: DetsPlus.Bloom
-0.277s
-0.254s
-0.276s
+3.0s
+2.617s
+2.845s
 ```
 
 ## File Structure

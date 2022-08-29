@@ -53,7 +53,7 @@ defmodule DetsPlus.Bench do
     filename = filename([test_size, module])
 
     if File.exists?(filename) do
-      :ok
+      filename
     else
       {:ok, dets} = open_file(module, filename)
 
@@ -156,8 +156,7 @@ defmodule DetsPlus.Bench do
     module.close(dets)
   end
 
-  def sync_test2(module, _test_size) do
-    filename = filename([module])
+  def sync_test2(filename, module, _test_size) do
     {:ok, dets} = open_file(module, filename)
     module.insert(dets, {1, 1})
     :ok = module.sync(dets)
@@ -236,11 +235,11 @@ defmodule DetsPlus.Bench do
       {%{context | prepare: &prepare_read_test/2}, "read", &read_test/3}
     ]
 
-    # Large read/write (:dets can't to because of it's 2GB limit)
+    # Large read/write (:dets can't execute this because of it's 2GB limit)
     all =
       all ++
         [
-          {%{context | rounds: 1, test_size: 4_00, modules: [DetsPlus, CubDBWrap]}, "large_write",
+          {%{context | rounds: 3, test_size: 4_00, modules: [DetsPlus, CubDBWrap]}, "large_write",
            &large_write_test/2}
         ]
 
@@ -252,11 +251,12 @@ defmodule DetsPlus.Bench do
           {%{context | test_size: 150_000}, "sync_test: 0 + 150_000 new inserts", &sync_test/3},
           {%{context | test_size: 1_500_000}, "sync_test: 0 + 1_500_000 new inserts",
            &sync_test/3},
-          {%{context | prepare: nil}, "sync_test 1_500_000 + 1 new inserts", &sync_test2/2}
+          {%{context | test_size: 1_500_000, prepare: &prepare_read_test/2},
+           "sync_test 1_500_000 + 1 new inserts", &sync_test2/3}
         ]
 
     context = %{rounds: 3, modules: [DetsPlus.Bloom], prepare: nil, test_size: 1_500_000}
-    all = all ++ [{context, "bloom", &bloom_test/2}]
+    all = all ++ [{context, ".bloom", &bloom_test/2}]
 
     # The impact of a faster hash doesn't seem relevant in testing, so we stick with sha256
     hashes = [
