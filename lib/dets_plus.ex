@@ -383,7 +383,7 @@ defmodule DetsPlus do
 
   @doc """
   Ensures that all updates made to table are written to disk. While the sync is running the
-  table can still be used for reads and writes, but writes issed after the `sync/1` call
+  table can still be used for reads and writes, but writes issued after the `sync/1` call
   will not be part of the persistent file. These new changes will only be included in the
   next sync call.
   """

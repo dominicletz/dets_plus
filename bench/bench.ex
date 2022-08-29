@@ -227,7 +227,12 @@ defmodule DetsPlus.Bench do
 
   def all_tests() do
     # Normal read/write
-    context = %{rounds: 3, modules: [:dets, DetsPlus, CubDBWrap], prepare: nil, test_size: 50_000}
+    context = %{
+      rounds: 3,
+      modules: [:dets, DetsPlus, KrakenDB, CubDBWrap],
+      prepare: nil,
+      test_size: 50_000
+    }
 
     all = [
       {context, "write", &write_test/2},
@@ -239,11 +244,16 @@ defmodule DetsPlus.Bench do
     all =
       all ++
         [
-          {%{context | rounds: 3, test_size: 4_00, modules: [DetsPlus, CubDBWrap]}, "large_write",
+          {%{context | rounds: 3, test_size: 4_00, modules: [DetsPlus, CubDBWrap, KrakenDB]},
            &large_write_test/2}
         ]
 
-    context = %{rounds: 3, modules: [DetsPlus], prepare: &prepare_sync_test/2, test_size: nil}
+    context = %{
+      rounds: 3,
+      modules: [DetsPlus, KrakenDB],
+      prepare: &prepare_sync_test/2,
+      test_size: nil
+    }
 
     all =
       all ++
@@ -302,6 +312,7 @@ defmodule DetsPlus.Bench do
   end
 
   defp open_file(module, filename) do
+    File.mkdir_p(Path.dirname("#{filename}"))
     module.open_file(List.to_atom(filename), file: filename)
   end
 end
