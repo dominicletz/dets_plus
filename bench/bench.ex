@@ -245,7 +245,7 @@ defmodule DetsPlus.Bench do
       all ++
         [
           {%{context | rounds: 3, test_size: 4_00, modules: [DetsPlus, CubDBWrap, KrakenDB]},
-           &large_write_test/2}
+           "large_write", &large_write_test/2}
         ]
 
     context = %{

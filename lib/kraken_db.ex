@@ -97,16 +97,17 @@ defmodule KrakenDB do
     :ok
   end
 
+  @prefix_size @hash_size - 1
   defp one(%__MODULE__{dets: dets, hashfun: hashfun}, method, object)
        when is_atom(method) and (is_tuple(object) or is_map(object)) do
-    <<idx, _::binary()>> = hashfun.(object)
+    <<_::binary-size(@prefix_size), idx>> = hashfun.(object)
     det = elem(dets, idx)
     apply(DetsPlus, method, [det, object])
   end
 
   defp onekey(%__MODULE__{dets: dets, keyhashfun: keyhashfun}, method, key)
        when is_atom(method) do
-    <<idx, _::binary()>> = keyhashfun.(key)
+    <<_::binary-size(@prefix_size), idx>> = keyhashfun.(key)
     det = elem(dets, idx)
     apply(DetsPlus, method, [det, key])
   end
