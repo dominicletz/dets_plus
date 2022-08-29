@@ -1,4 +1,6 @@
-defmodule CubDBPut do
+defmodule DetsPlus.Bench.CubDBPut do
+  alias DetsPlus.Bench.{DetsWrap, DetsPlusWrap}
+
   def run() do
     data_dir = "tmp/bm_put"
 
@@ -13,8 +15,8 @@ defmodule CubDBPut do
     ten_mb = :rand.bytes(1024 * 1024 * 10)
 
     scenarios =
-      for module <- [CubDB, DetsWrap, DetsPlusWrap] do
-        label = "#{inspect(module)}.put/3"
+      for {label, module} <- [{"CubDB", CubDB}, {":dets", DetsWrap}, {"DetsPlus", DetsPlusWrap}] do
+        label = "#{label}.put/3"
         fun = fn {key, value, db} -> module.put(db, key, value) end
 
         hooks = [

@@ -1,4 +1,4 @@
-defmodule DetsPlusWrap do
+defmodule DetsPlus.Bench.DetsPlusWrap do
   def start_link(filename, _args) do
     DetsPlus.open_file(__MODULE__, file: String.to_charlist(filename))
   end

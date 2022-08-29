@@ -1,4 +1,6 @@
-defmodule CubDBGet do
+defmodule DetsPlus.Bench.CubDBGet do
+  alias DetsPlus.Bench.{DetsWrap, DetsPlusWrap}
+
   def run() do
     data_dir = "tmp/bm_get"
 
@@ -14,8 +16,8 @@ defmodule CubDBGet do
     n = 100
 
     scenarios =
-      for module <- [CubDB, DetsWrap, DetsPlusWrap] do
-        label = "#{inspect(module)}.get/2"
+      for {label, module} <- [{"CubDB", CubDB}, {":dets", DetsWrap}, {"DetsPlus", DetsPlusWrap}] do
+        label = "#{label}.get/2"
         fun = fn {key, db} -> module.get(db, key) end
 
         hooks = [
