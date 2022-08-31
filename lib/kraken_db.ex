@@ -4,6 +4,7 @@ defmodule KrakenDB do
   """
   defstruct [:dets, :keypos, :keyfun, :keyhashfun, :hashfun]
   @type t :: %__MODULE__{}
+  @shard_count 256
 
   @doc false
   def open_file(name, args \\ []) when is_atom(name) and is_list(args) do
@@ -12,8 +13,8 @@ defmodule KrakenDB do
 
   def open_directory(name, args \\ []) when is_list(args) do
     directory = Keyword.get(args, :directory, name)
-    File.mkdir_p(directory)
 
+    File.mkdir_p(directory)
     meta = Path.join(directory, "meta")
 
     args =
@@ -26,11 +27,24 @@ defmodule KrakenDB do
           args
       end
 
+    auto_save_memory = Keyword.get(args, :auto_save_memory, 1_000_000_000)
+    page_cache = Keyword.get(args, :page_cache, 1_000_000_000)
+
     dets =
-      Enum.map(1..256, fn index ->
+      Enum.map(1..@shard_count, fn index ->
         file = Path.join(directory, "partition_#{index}")
         name = String.to_atom(file)
-        {:ok, det} = DetsPlus.open_file(name, Keyword.put(args, :file, file))
+
+        {:ok, det} =
+          DetsPlus.open_file(
+            name,
+            Keyword.merge(args,
+              file: file,
+              page_cache: div(page_cache, @shard_count),
+              auto_save_memory: div(auto_save_memory, @shard_count)
+            )
+          )
+
         det
       end)
       |> List.to_tuple()

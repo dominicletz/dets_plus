@@ -55,31 +55,33 @@ defmodule DetsPlus do
     @moduledoc false
     @enforce_keys [:version]
     defstruct [
-      :version,
-      :bloom,
+      :auto_save_memory,
+      :auto_save,
       :bloom_size,
+      :bloom,
+      :creation_stats,
+      :ets_memory,
+      :ets,
+      :file_entries,
+      :file_size,
       :filename,
       :fp,
-      :name,
-      :ets,
-      :ets_memory,
-      :mode,
-      :auto_save,
-      :keypos,
+      :hashfun,
+      :header_size,
       :keyfun,
       :keyhashfun,
-      :hashfun,
-      :type,
-      :file_entries,
+      :keypos,
+      :mode,
+      :name,
       :slot_counts,
-      :table_offsets,
-      :sync,
-      :sync_waiters,
-      :file_size,
-      :header_size,
-      :sync_fallback,
       :sync_fallback_memory,
-      :creation_stats
+      :sync_fallback,
+      :sync_waiters,
+      :sync,
+      :table_offsets,
+      :type,
+      :version,
+      :page_cache_memory
     ]
   end
 
@@ -90,19 +92,25 @@ defmodule DetsPlus do
     Arguments:
 
     - `auto_save` - The autosave interval. If the interval is an integer Time, the table is flushed to disk whenever it is not accessed for Time milliseconds. If the interval is the atom infinity, autosave is disabled. Defaults to `180_000` (3 minutes).
+    - `auto_save_memory` - The autosave threshold in memory. When the internal ETS table reaches a size bigger than this the table is flushed to disk. Defaults to `1_000_000_000` (1 GB)
+    - `page_cache_memory` - The amount of memory to use for file system caching. Defaults to `1_000_000_000` (1 GB)
     - `keypos` - The position of the element of each object to be used as key. Defaults to 1. The ability to explicitly state the key position is most convenient when we want to store Erlang records in which the first position of the record is the name of the record type.
   """
   def open_file(name, args \\ []) when is_atom(name) do
     filename = Keyword.get(args, :file, name) |> do_string()
 
+    # amount of memory to use max before a flush is enforced
+    auto_save_memory = Keyword.get(args, :auto_save_memory, 1_000_000_000)
+    auto_save = Keyword.get(args, :auto_save, 180_000)
+    page_cache_memory = Keyword.get(args, :page_cache_memory, 1_000_000_000)
+    mode = Keyword.get(args, :access, :read_write)
+
     state =
       with true <- File.exists?(filename),
            {:ok, %File.Stat{size: file_size}} when file_size > 0 <- File.stat(filename) do
-        load_state(filename, file_size)
+        load_state(filename, file_size, page_cache_memory)
       else
         _ ->
-          mode = Keyword.get(args, :access, :read_write)
-          auto_save = Keyword.get(args, :auto_save, 180_000)
           keypos = Keyword.get(args, :keypos, 1)
           type = Keyword.get(args, :type, :set)
 
@@ -134,6 +142,15 @@ defmodule DetsPlus do
       end
       |> init_hashfuns()
 
+    # These properties should override what is stored on disk
+    state = %State{
+      state
+      | auto_save_memory: auto_save_memory,
+        auto_save: auto_save,
+        mode: mode,
+        page_cache_memory: page_cache_memory
+    }
+
     case GenServer.start_link(__MODULE__, state, hibernate_after: 5_000, name: name) do
       {:ok, pid} -> {:ok, GenServer.call(pid, :get_handle)}
       err -> err
@@ -158,8 +175,8 @@ defmodule DetsPlus do
     }
   end
 
-  defp load_state(filename, file_size) do
-    fp = file_open(filename)
+  defp load_state(filename, file_size, page_cache_memory) do
+    fp = file_open(filename, page_cache_memory)
 
     {:ok, <<header_offset::unsigned-size(@slot_size_bits)>>} =
       PagedFile.pread(fp, file_size - @slot_size, @slot_size)
@@ -183,6 +200,7 @@ defmodule DetsPlus do
     %State{state | bloom: bloom}
     |> Map.put(:ets_memory, 0)
     |> Map.put(:sync_fallback_memory, 0)
+    |> Map.put(:auto_save_memory, 0)
   end
 
   @wfile PagedFile
@@ -515,7 +533,6 @@ defmodule DetsPlus do
   end
 
   # this needs to be configured...
-  @memory_valve 1_000_000_000
   def handle_call(
         {:insert, objects},
         from,
@@ -525,7 +542,8 @@ defmodule DetsPlus do
           sync: sync,
           sync_fallback: fallback,
           sync_fallback_memory: fallback_memory,
-          sync_waiters: sync_waiters
+          sync_waiters: sync_waiters,
+          auto_save_memory: auto_save_memory
         }
       ) do
     if sync == nil do
@@ -534,7 +552,7 @@ defmodule DetsPlus do
 
       sync =
         sync ||
-          if ets_memory > @memory_valve and sync == nil do
+          if ets_memory > auto_save_memory and sync == nil do
             spawn_sync_worker(state)
           end
 
@@ -549,7 +567,7 @@ defmodule DetsPlus do
       fallback_memory = fallback_memory + estimate_size(objects)
       state = %State{state | sync_fallback: fallback, sync_fallback_memory: fallback_memory}
 
-      if fallback_memory > @memory_valve do
+      if fallback_memory > auto_save_memory do
         # this pause exists to protect from out_of_memory situations when the writer can't
         # finish in time
         Logger.warn(
@@ -666,7 +684,8 @@ defmodule DetsPlus do
           ets: ets,
           sync: sync_pid,
           sync_waiters: waiters,
-          sync_fallback: fallback
+          sync_fallback: fallback,
+          page_cache_memory: page_cache_memory
         }
       ) do
     if fp != nil do
@@ -674,7 +693,7 @@ defmodule DetsPlus do
     end
 
     File.rename!(new_filename, filename)
-    fp = file_open(filename)
+    fp = file_open(filename, page_cache_memory)
 
     :ets.delete_all_objects(ets)
     :ets.insert(ets, Map.to_list(fallback))
@@ -1327,8 +1346,19 @@ defmodule DetsPlus do
   defp do_string(list) when is_list(list), do: List.to_string(list)
   defp do_string(string) when is_binary(string), do: string
 
-  defp file_open(filename) do
-    opts = [page_size: 1_000_000, max_pages: 1000]
+  defp file_open(filename, page_cache_memory) do
+    # Defaults to page size 1mb with at least 10 pages
+    # if smaller than 10mb total cache are requested
+    # defaults to at least 10x100kb pages (so 1mb is always consumed)
+    opts =
+      if page_cache_memory > 10_000_000 do
+        max_pages = div(page_cache_memory, 1_000_000)
+        [page_size: 1_000_000, max_pages: max_pages]
+      else
+        max_pages = div(page_cache_memory, 100_000) |> min(10)
+        [page_size: 100_000, max_pages: max_pages]
+      end
+
     {:ok, fp} = PagedFile.open(filename, opts)
     fp
   end
