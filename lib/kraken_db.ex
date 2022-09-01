@@ -28,7 +28,7 @@ defmodule KrakenDB do
       end
 
     auto_save_memory = Keyword.get(args, :auto_save_memory, 1_000_000_000)
-    page_cache = Keyword.get(args, :page_cache, 1_000_000_000)
+    page_cache_memory = Keyword.get(args, :page_cache_memory, 1_000_000_000)
 
     dets =
       Enum.map(1..@shard_count, fn index ->
@@ -40,7 +40,7 @@ defmodule KrakenDB do
             name,
             Keyword.merge(args,
               file: file,
-              page_cache: div(page_cache, @shard_count),
+              page_cache_memory: div(page_cache_memory, @shard_count),
               auto_save_memory: div(auto_save_memory, @shard_count)
             )
           )

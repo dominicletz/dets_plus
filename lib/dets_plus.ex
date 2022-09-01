@@ -200,7 +200,8 @@ defmodule DetsPlus do
     %State{state | bloom: bloom}
     |> Map.put(:ets_memory, 0)
     |> Map.put(:sync_fallback_memory, 0)
-    |> Map.put(:auto_save_memory, 0)
+    |> Map.put(:auto_save_memory, nil)
+    |> Map.put(:page_cache_memory, nil)
   end
 
   @wfile PagedFile
@@ -552,7 +553,7 @@ defmodule DetsPlus do
 
       sync =
         sync ||
-          if ets_memory > auto_save_memory and sync == nil do
+          if ets_memory > auto_save_memory do
             spawn_sync_worker(state)
           end
 
@@ -772,70 +773,80 @@ defmodule DetsPlus do
     # 2. fp entries are sorted by hash
     dets = self()
 
-    worker =
-      spawn_link(fn ->
-        stats = {:erlang.timestamp(), []}
-        new_dataset = :ets.tab2list(ets)
-        stats = add_stats(stats, :ets_flush)
-        send(dets, :continue)
+    spawn_link(fn ->
+      register_name()
+      stats = {:erlang.timestamp(), []}
+      new_dataset = :ets.tab2list(ets)
+      stats = add_stats(stats, :ets_flush)
 
-        # Ensuring hash function sort order
-        new_dataset = parallel_hash(keyhashfun, new_dataset)
-        stats = add_stats(stats, :ets_hash)
+      # Ensuring hash function sort order
+      new_dataset = parallel_hash(keyhashfun, new_dataset)
+      stats = add_stats(stats, :ets_hash)
 
-        old_file =
-          if fp != nil do
-            FileReader.new(fp, byte_size("DET+"), module: PagedFile, buffer_size: 100_000)
-          else
-            nil
-          end
+      old_file =
+        if fp != nil do
+          FileReader.new(fp, byte_size("DET+"), module: PagedFile, buffer_size: 100_000)
+        else
+          nil
+        end
 
-        new_filename = "#{filename}.tmp"
-        @wfile.delete(new_filename)
+      new_filename = "#{filename}.tmp"
+      @wfile.delete(new_filename)
 
-        # ~5mb for this write buffer, it's mostly append only, higher values
-        # didn't make an impact.
-        # (the only non-append workflow on this fp is the hash overflow handler, but that is usually small)
-        opts = [page_size: 512_000, max_pages: 10]
-        {:ok, new_file} = @wfile.open(new_filename, opts)
-        state = %State{state | fp: new_file}
-        stats = add_stats(stats, :fopen)
-        new_dataset_length = length(new_dataset)
+      # ~5mb for this write buffer, it's mostly append only, higher values
+      # didn't make an impact.
+      # (the only non-append workflow on this fp is the hash overflow handler, but that is usually small)
+      opts = [page_size: 512_000, max_pages: 10]
+      {:ok, new_file} = @wfile.open(new_filename, opts)
+      state = %State{state | fp: new_file}
+      stats = add_stats(stats, :fopen)
+      new_dataset_length = length(new_dataset)
 
-        # setting the bloom size based of a size estimate
-        future_bloom = Task.async(fn -> write_bloom(file_entries + new_dataset_length) end)
-        future_entries = Task.async(fn -> write_entries(state, new_dataset_length) end)
-        future_state = Task.async(fn -> write_data(state) end)
+      # setting the bloom size based of a size estimate
+      future_bloom = Task.async(fn -> write_bloom(file_entries + new_dataset_length) end)
+      future_entries = Task.async(fn -> write_entries(state, new_dataset_length) end)
+      future_state = Task.async(fn -> write_data(state) end)
 
-        # This starts of the file_reader sending entry data to above the future_* workers
-        pids = [future_bloom.pid, future_entries.pid, future_state.pid]
-        async_iterate_produce(keyfun, new_dataset, old_file, pids)
+      # This starts of the file_reader sending entry data to above the future_* workers
+      pids = [future_bloom.pid, future_entries.pid, future_state.pid]
+      async_iterate_produce(keyfun, new_dataset, old_file, pids)
 
-        state = Task.await(future_state, :infinity)
-        {bloom, bloom_size} = Task.await(future_bloom, :infinity)
-        state = %State{state | bloom: bloom, bloom_size: bloom_size}
+      state = Task.await(future_state, :infinity)
+      {bloom, bloom_size} = Task.await(future_bloom, :infinity)
+      state = %State{state | bloom: bloom, bloom_size: bloom_size}
 
-        entries = Task.await(future_entries, :infinity)
+      entries = Task.await(future_entries, :infinity)
 
-        stats = add_stats(stats, :write_entries)
-        state = write_hashtable(state, entries)
-        stats = add_stats(stats, :write_hashtable)
-        state = store_state(state)
-        stats = add_stats(stats, :header_store)
+      stats = add_stats(stats, :write_entries)
+      state = write_hashtable(state, entries)
+      stats = add_stats(stats, :write_hashtable)
+      state = store_state(state)
+      stats = add_stats(stats, :header_store)
 
-        @wfile.close(new_file)
-        {_, stats} = add_stats(stats, :file_close)
+      @wfile.close(new_file)
+      {_, stats} = add_stats(stats, :file_close)
 
-        state = %State{state | creation_stats: stats}
-        GenServer.cast(dets, {:sync_complete, self(), new_filename, state})
-      end)
+      state = %State{state | creation_stats: stats}
+      GenServer.cast(dets, {:sync_complete, self(), new_filename, state})
+    end)
 
     # Profiler.fprof(worker)
+  end
 
-    receive do
-      :continue ->
-        :erlang.garbage_collect()
-        worker
+  @max 3
+  defp register_name(n \\ 0) do
+    n =
+      if n == @max do
+        Process.sleep(100)
+        0
+      else
+        n + 1
+      end
+
+    try do
+      Process.register(self(), String.to_atom("DetsPlus_Flush_#{n}"))
+    rescue
+      _e -> register_name(n)
     end
   end
 
