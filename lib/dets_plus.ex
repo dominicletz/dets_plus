@@ -774,6 +774,7 @@ defmodule DetsPlus do
     dets = self()
 
     spawn_link(fn ->
+      Process.flag(:priority, :low)
       register_name()
       stats = {:erlang.timestamp(), []}
       new_dataset = :ets.tab2list(ets)
