@@ -182,6 +182,23 @@ defmodule DetsPlus.Test do
       assert Enum.to_list(dets) == []
     end
 
+    test "leave no zombies" do
+      assert count_processes_by_module(PagedFile) == 0
+      dets1 = open_dets("test_file9")
+      DetsPlus.insert(dets1, {:a, :b})
+      DetsPlus.sync(dets1)
+      assert count_processes_by_module(PagedFile) == 1
+      DetsPlus.close(dets1)
+      assert count_processes_by_module(PagedFile) == 0
+    end
+
+    def count_processes_by_module(module) do
+      Process.list()
+      |> Enum.map(fn p -> Process.info(p)[:dictionary][:"$initial_call"] end)
+      |> Enum.filter(fn tuple -> is_tuple(tuple) and elem(tuple, 0) == module end)
+      |> Enum.count()
+    end
+
     defp open_dets(name, args \\ []) do
       File.rm(name)
       {:ok, dets} = DetsPlus.open_file(String.to_atom(name), args)

@@ -1374,6 +1374,13 @@ defmodule DetsPlus do
     {:ok, fp} = PagedFile.open(filename, opts)
     fp
   end
+
+  @impl true
+  def terminate(_reason, %State{fp: fp}) do
+    if fp != nil do
+      :ok = PagedFile.close(fp)
+    end
+  end
 end
 
 defimpl Enumerable, for: DetsPlus do
