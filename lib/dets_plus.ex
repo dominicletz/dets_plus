@@ -797,16 +797,16 @@ defmodule DetsPlus do
       # ~5mb for this write buffer, it's mostly append only, higher values
       # didn't make an impact.
       # (the only non-append workflow on this fp is the hash overflow handler, but that is usually small)
-      opts = [page_size: 512_000, max_pages: 10]
+      opts = [page_size: 512_000, max_pages: 10, priority: :low]
       {:ok, new_file} = @wfile.open(new_filename, opts)
       state = %State{state | fp: new_file}
       stats = add_stats(stats, :fopen)
       new_dataset_length = length(new_dataset)
 
       # setting the bloom size based of a size estimate
-      future_bloom = Task.async(fn -> write_bloom(file_entries + new_dataset_length) end)
-      future_entries = Task.async(fn -> write_entries(state, new_dataset_length) end)
-      future_state = Task.async(fn -> write_data(state) end)
+      future_bloom = task_async(fn -> write_bloom(file_entries + new_dataset_length) end)
+      future_entries = task_async(fn -> write_entries(state, new_dataset_length) end)
+      future_state = task_async(fn -> write_data(state) end)
 
       # This starts of the file_reader sending entry data to above the future_* workers
       pids = [future_bloom.pid, future_entries.pid, future_state.pid]
@@ -834,11 +834,10 @@ defmodule DetsPlus do
     # Profiler.fprof(worker)
   end
 
-  @max 3
+  @max 0
   defp register_name(n \\ 0) do
     n =
       if n == @max do
-        Process.sleep(100)
         0
       else
         n + 1
@@ -847,7 +846,9 @@ defmodule DetsPlus do
     try do
       Process.register(self(), String.to_atom("DetsPlus_Flush_#{n}"))
     rescue
-      _e -> register_name(n)
+      _e ->
+        Process.sleep(100)
+        register_name(n)
     end
   end
 
@@ -859,7 +860,7 @@ defmodule DetsPlus do
 
     if len > @min_chunk_size and tasks < @max_tasks do
       {a, b} = Enum.split(new_dataset, div(len, 2))
-      task = Task.async(fn -> parallel_hash(keyhashfun, a, tasks * 2) end)
+      task = task_async(fn -> parallel_hash(keyhashfun, a, tasks * 2) end)
       result = parallel_hash(keyhashfun, b, tasks * 2)
       :lists.merge(Task.await(task, :infinity), result)
     else
@@ -868,6 +869,13 @@ defmodule DetsPlus do
       end)
       |> :lists.sort()
     end
+  end
+
+  defp task_async(fun) do
+    Task.async(fn ->
+      Process.flag(:priority, :low)
+      fun.()
+    end)
   end
 
   defp write_bloom(estimated_file_entries) do
@@ -973,7 +981,7 @@ defmodule DetsPlus do
       start_offset = table_offset(state, hd(range))
       end_offset = table_offset(state, List.last(range) + 1)
       writer = FileWriter.new(fp, start_offset, module: @wfile, limit: end_offset)
-      Task.async(fn -> write_hashtable_range(range, writer, entries, new_slot_counts) end)
+      task_async(fn -> write_hashtable_range(range, writer, entries, new_slot_counts) end)
     end)
     |> Task.await_many(:infinity)
 

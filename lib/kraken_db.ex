@@ -41,7 +41,8 @@ defmodule KrakenDB do
             Keyword.merge(args,
               file: file,
               page_cache_memory: div(page_cache_memory, @shard_count),
-              auto_save_memory: div(auto_save_memory, @shard_count)
+              auto_save_memory: div(auto_save_memory, @shard_count),
+              auto_save: :never
             )
           )
 
