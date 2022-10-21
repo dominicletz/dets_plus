@@ -1,7 +1,7 @@
 defmodule DetsPlus.MixProject do
   use Mix.Project
 
-  @version "2.1.2"
+  @version "2.1.3"
   @name "DetsPlus"
   @url "https://github.com/dominicletz/dets_plus"
   @maintainers ["Dominic Letz"]
