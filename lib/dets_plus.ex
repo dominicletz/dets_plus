@@ -834,7 +834,7 @@ defmodule DetsPlus do
     # Profiler.fprof(worker)
   end
 
-  @max 0
+  @max 1
   defp register_name(n \\ 0) do
     n =
       if n == @max do
