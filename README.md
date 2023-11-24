@@ -1,4 +1,4 @@
-# DetsPlus
+# DetsPlus ![Build](https://github.com/dominicletz/dets_plus/actions/workflows/test.yml/badge.svg)
 
 DetsPlus persistent tuple/struct/map storage.
 
