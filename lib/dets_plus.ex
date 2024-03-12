@@ -754,6 +754,9 @@ defmodule DetsPlus do
       num when is_number(num) ->
         8
 
+      struct when is_struct(struct) ->
+        estimate_size(Map.from_struct(struct), depth)
+
       enum when is_map(enum) or is_list(enum) ->
         Enum.reduce(enum, 0, fn term, size -> size + estimate_size(term, depth + 1) end)
 
