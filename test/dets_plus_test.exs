@@ -195,8 +195,7 @@ defmodule DetsPlus.Test do
     def count_processes_by_module(module) do
       Process.list()
       |> Enum.map(fn p -> Process.info(p)[:dictionary][:"$initial_call"] end)
-      |> Enum.filter(fn tuple -> is_tuple(tuple) and elem(tuple, 0) == module end)
-      |> Enum.count()
+      |> Enum.count(fn tuple -> is_tuple(tuple) and elem(tuple, 0) == module end)
     end
 
     defp open_dets(name, args \\ []) do
