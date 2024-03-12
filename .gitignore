@@ -27,3 +27,6 @@ dets_plus-*.tar
 /tmp
 
 /test_file*
+
+# This is a library ignore mix.lock
+mix.lock

@@ -1,7 +1,7 @@
 defmodule DetsPlus.Bloom do
   @moduledoc false
   alias DetsPlus.{Bloom, State}
-  use Bitwise
+  import Bitwise
   @hash_size_bits 64
   @atomic_bits 64
 

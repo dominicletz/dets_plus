@@ -23,6 +23,15 @@ defmodule DetsPlus do
   - Total file size: 18_446 Petabyte
   - Maximum entry size: 4 Gigabyte
   - Maximum entry count: :infinity
+
+  Example:
+
+  ```elixir
+  {:ok, dets} = DetsPlus.open_file(:example)
+  DetsPlus.insert(dets, {1, 1, 1})
+  [{1, 1, 1}] = DetsPlus.lookup(dets, 1)
+  :ok =  DetsPlus.close(dets)
+  ```
   """
 
   # This limits the total database size to 18_446 PB
@@ -88,9 +97,12 @@ defmodule DetsPlus do
   @doc """
     Opens an existing table or creates a new table. If no
     `file` argument is provided the table name will be used.
+    Dets registers a Process under the provided name which can
+    be used for calling alternatively to the pid.
 
     Arguments:
 
+    - `file` - An optional path + filename for the database file.
     - `auto_save` - The autosave interval. If the interval is an integer Time, the table is flushed to disk whenever it is not accessed for Time milliseconds. If the interval is the atom infinity, autosave is disabled. Defaults to `180_000` (3 minutes).
     - `auto_save_memory` - The autosave threshold in memory. When the internal ETS table reaches a size bigger than this the table is flushed to disk. Defaults to `1_000_000_000` (1 GB)
     - `page_cache_memory` - The amount of memory to use for file system caching. Defaults to `1_000_000_000` (1 GB)
@@ -571,7 +583,7 @@ defmodule DetsPlus do
       if fallback_memory > auto_save_memory do
         # this pause exists to protect from out_of_memory situations when the writer can't
         # finish in time
-        Logger.warn(
+        Logger.warning(
           "State flush slower than new inserts - pausing writes until flush is complete"
         )
 
@@ -937,7 +949,7 @@ defmodule DetsPlus do
             FileWriter.write(
               writer,
               <<entry_hash::binary-size(@hash_size), size::unsigned-size(@entry_size_size_bits),
-                entry_bin::binary()>>
+                entry_bin::binary>>
             )
 
           {:cont, {state, writer}}
@@ -957,7 +969,7 @@ defmodule DetsPlus do
   _ =
     Enum.reduce(1..56, {[], 2}, fn bits, {code, size} ->
       next =
-        defp slot_idx(unquote(size), <<_, slot::unsigned-size(unquote(bits)), _::bitstring()>>) do
+        defp slot_idx(unquote(size), <<_, slot::unsigned-size(unquote(bits)), _::bitstring>>) do
           slot
         end
 
@@ -1351,14 +1363,14 @@ defmodule DetsPlus do
   end
 
   defp default_hash(key) do
-    <<hash::binary-size(@hash_size), _::binary()>> =
+    <<hash::binary-size(@hash_size), _::binary>> =
       :crypto.hash(:sha256, :erlang.term_to_binary(key))
 
     hash
   end
 
   # get a table idx from the hash value
-  defp table_idx(<<idx, _::binary()>>) do
+  defp table_idx(<<idx, _::binary>>) do
     idx
   end
 

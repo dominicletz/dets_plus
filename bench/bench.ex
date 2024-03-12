@@ -297,10 +297,10 @@ defmodule DetsPlus.Bench do
       nil ->
         num = Process.get(:filename_counter, 0)
         Process.put(:filename_counter, num + 1)
-        'tmp/test_file_#{num}_detsplus_bench'
+        ~c"tmp/test_file_#{num}_detsplus_bench"
 
       bin when is_binary(bin) ->
-        '#{filename()}_#{args}'
+        ~c"#{filename()}_#{args}"
 
       args when is_list(args) ->
         filename(Enum.join(args, "_"))

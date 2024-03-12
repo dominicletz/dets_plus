@@ -79,7 +79,7 @@ defmodule KrakenDB do
 
   @hash_size 8
   defp default_hash(key) do
-    <<hash::binary-size(@hash_size), _::binary()>> =
+    <<hash::binary-size(@hash_size), _::binary>> =
       :crypto.hash(:sha256, :erlang.term_to_binary(key))
 
     hash
