@@ -269,7 +269,7 @@ defmodule DetsPlus do
   @doc """
   Syncs pending writes to the persistent file and closes the table.
   """
-  @spec close(DetsPlus.t()) :: :ok
+  @spec close(DetsPlus.t() | pid() | atom()) :: :ok
   def close(%__MODULE__{pid: pid}), do: close(pid)
 
   def close(pid) when is_pid(pid) or is_atom(pid) do
@@ -280,7 +280,7 @@ defmodule DetsPlus do
   @doc """
   Deletes all objects from a table in almost constant time.
   """
-  @spec delete_all_objects(DetsPlus.t()) :: :ok | {:error, atom()}
+  @spec delete_all_objects(DetsPlus.t() | pid() | atom()) :: :ok | {:error, atom()}
   def delete_all_objects(%__MODULE__{pid: pid}), do: delete_all_objects(pid)
 
   def delete_all_objects(pid) when is_pid(pid) or is_atom(pid) do
@@ -290,7 +290,7 @@ defmodule DetsPlus do
   @doc """
   Deletes all instances of a specified object from a table.
   """
-  @spec delete_object(DetsPlus.t(), tuple() | map()) :: :ok | {:error, atom()}
+  @spec delete_object(DetsPlus.t() | pid() | atom(), tuple() | map()) :: :ok | {:error, atom()}
   def delete_object(pid, object) when is_pid(pid) or is_atom(pid) do
     delete_object(call(pid, :get_handle), object)
   end
@@ -302,7 +302,7 @@ defmodule DetsPlus do
   @doc """
   Deletes all objects with key Key from table Name.
   """
-  @spec delete(DetsPlus.t(), any()) :: :ok | {:error, atom()}
+  @spec delete(DetsPlus.t() | pid() | atom(), any()) :: :ok | {:error, atom()}
   def delete(%__MODULE__{pid: pid}, key), do: delete(pid, key)
 
   def delete(pid, key) when is_pid(pid) or is_atom(pid) do
@@ -312,7 +312,8 @@ defmodule DetsPlus do
   @doc """
     Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
-  @spec insert(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: :ok | {:error, atom()}
+  @spec insert(DetsPlus.t() | pid() | atom(), tuple() | map() | [tuple() | map()]) ::
+          :ok | {:error, atom()}
   def insert(pid, objects) when is_pid(pid) or is_atom(pid) do
     insert(call(pid, :get_handle), objects)
   end
@@ -328,7 +329,8 @@ defmodule DetsPlus do
   @doc """
   Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
   """
-  @spec insert_new(DetsPlus.t(), tuple() | map() | [tuple() | map()]) :: true | false
+  @spec insert_new(DetsPlus.t() | pid() | atom(), tuple() | map() | [tuple() | map()]) ::
+          true | false
   def insert_new(pid, object) when is_pid(pid) or is_atom(pid) do
     insert_new(call(pid, :get_handle), object)
   end
@@ -347,7 +349,7 @@ defmodule DetsPlus do
   @doc """
   Returns the number of object in the table. This is an estimate and the same as `info(dets, :size)`.
   """
-  @spec count(DetsPlus.t()) :: integer()
+  @spec count(DetsPlus.t() | pid() | atom()) :: integer()
   def count(pid) when is_pid(pid) or is_atom(pid), do: count(call(pid, :get_handle))
 
   def count(dets = %__MODULE__{}) do
@@ -357,7 +359,7 @@ defmodule DetsPlus do
   @doc """
   Reducer function following the `Enum` protocol.
   """
-  @spec reduce(DetsPlus.t(), any(), fun()) :: any()
+  @spec reduce(DetsPlus.t() | pid() | atom(), any(), fun()) :: any()
   def reduce(pid, acc, fun) when is_pid(pid) or is_atom(pid),
     do: reduce(call(pid, :get_handle), acc, fun)
 
@@ -385,7 +387,7 @@ defmodule DetsPlus do
 
   Notice that the order of objects returned is unspecified. In particular, the order in which objects were inserted is not reflected.
   """
-  @spec lookup(DetsPlus.t(), any) :: [tuple() | map()] | {:error, atom()}
+  @spec lookup(DetsPlus.t() | pid() | atom(), any) :: [tuple() | map()] | {:error, atom()}
   def lookup(pid, key) when is_pid(pid) or is_atom(pid), do: lookup(call(pid, :get_handle), key)
 
   def lookup(%__MODULE__{pid: pid, keyhashfun: keyhashfun}, key) do
@@ -395,7 +397,7 @@ defmodule DetsPlus do
   @doc """
   Works like `lookup/2`, but does not return the objects. Returns true if one or more table elements has the key `key`, otherwise false.
   """
-  @spec member?(DetsPlus.t(), any) :: false | true | {:error, atom}
+  @spec member?(DetsPlus.t() | pid() | atom(), any) :: false | true | {:error, atom}
   def member?(dets, key) do
     case lookup(dets, key) do
       [] -> false
@@ -407,7 +409,7 @@ defmodule DetsPlus do
   @doc """
   Same as `member?/2`
   """
-  @spec member(DetsPlus.t(), any) :: false | true | {:error, atom}
+  @spec member(DetsPlus.t() | pid() | atom(), any) :: false | true | {:error, atom}
   def member(dets, key) do
     member?(dets, key)
   end
@@ -418,7 +420,7 @@ defmodule DetsPlus do
   will not be part of the persistent file. These new changes will only be included in the
   next sync call.
   """
-  @spec sync(DetsPlus.t()) :: :ok
+  @spec sync(DetsPlus.t() | pid() | atom()) :: :ok
   def sync(%__MODULE__{pid: pid}), do: sync(pid)
 
   def sync(pid) when is_pid(pid) or is_atom(pid) do
@@ -428,7 +430,7 @@ defmodule DetsPlus do
   @doc """
   Starts a sync of all changes to the disk. Same as `sync/1` but doesn't block
   """
-  @spec start_sync(DetsPlus.t()) :: :ok
+  @spec start_sync(DetsPlus.t() | pid() | atom()) :: :ok
   def start_sync(%__MODULE__{pid: pid}), do: start_sync(pid)
 
   def start_sync(pid) when is_pid(pid) or is_atom(pid) do
@@ -444,7 +446,7 @@ defmodule DetsPlus do
   - `{size, integer() >= 0}` - The number of objects estimated in the table.
   - `{type, type()}` - The table type.
   """
-  @spec info(DetsPlus.t()) :: [] | nil
+  @spec info(DetsPlus.t() | pid() | atom()) :: [] | nil
   def info(%__MODULE__{pid: pid}), do: info(pid)
 
   def info(pid) when is_pid(pid) or is_atom(pid) do
