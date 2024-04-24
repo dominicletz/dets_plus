@@ -327,7 +327,7 @@ defmodule DetsPlus do
   end
 
   @doc """
-  Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
+  Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be retained and false will be returned.
   """
   @spec insert_new(DetsPlus.t() | pid() | atom(), tuple() | map() | [tuple() | map()]) ::
           true | false
