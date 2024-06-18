@@ -487,6 +487,13 @@ defmodule DetsPlus do
     end
   end
 
+  @doc """
+  Returns the contents of the table as list. Same as calling `Enum.to_list()`
+  """
+  def to_list(dets) do
+    Enum.to_list(dets)
+  end
+
   defp call(pid, cmd, timeout \\ :infinity) do
     GenServer.call(pid, cmd, timeout)
   end

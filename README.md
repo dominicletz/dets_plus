@@ -55,6 +55,25 @@ DetsPlus.insert(dets, %{id: 1, value: 42})
 :ok =  DetsPlus.close(dets)
 ```
 
+## Usage as LRU cache
+
+For usage as an LRU cache backend there is an DetsPlus.LRU module available:
+
+```elixir
+alias DetsPlus.LRU
+
+{:ok, dets} = DetsPlus.open_file(:example)
+filter = fn value -> value != nil end
+max_size = 2
+lru = LRU.new(dets, max_size, filter)
+LRU.put(lru, 1, "1")
+LRU.put(lru, 2, "2")
+LRU.put(lru, 3, "3")
+LRU.get(lru, 1) == nil
+
+DetsPlus.close(dets)
+```
+
 ## Ideas for PRs and future improvements
 
 - Add `update_counter/3`
