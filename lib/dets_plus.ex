@@ -56,7 +56,7 @@ defmodule DetsPlus do
   use GenServer
   require Logger
 
-  defstruct [:pid, :ets, :keyfun, :keyhashfun, :hashfun]
+  defstruct [:pid, :ets, :keyfun, :keyhashfun, :hashfun, :serializer]
 
   @type t :: %__MODULE__{pid: pid()}
 
@@ -82,6 +82,8 @@ defmodule DetsPlus do
       :keypos,
       :mode,
       :name,
+      :page_cache_memory,
+      :serializer,
       :slot_counts,
       :sync_fallback_memory,
       :sync_fallback,
@@ -89,8 +91,7 @@ defmodule DetsPlus do
       :sync,
       :table_offsets,
       :type,
-      :version,
-      :page_cache_memory
+      :version
     ]
   end
 
@@ -107,15 +108,31 @@ defmodule DetsPlus do
     - `auto_save_memory` - The autosave threshold in memory. When the internal ETS table reaches a size bigger than this the table is flushed to disk. Defaults to `1_000_000_000` (1 GB)
     - `page_cache_memory` - The amount of memory to use for file system caching. Defaults to `1_000_000_000` (1 GB)
     - `keypos` - The position of the element of each object to be used as key. Defaults to 1. The ability to explicitly state the key position is most convenient when we want to store Erlang records in which the first position of the record is the name of the record type.
+    - `compressed` - Indicates whether the terms stored on disk should be compressed. Possible values are [true, false, 0 - 9]. Defaults to `false`.
   """
   def open_file(name, args \\ []) when is_atom(name) do
-    filename = Keyword.get(args, :file, name) |> do_string()
+    {filename, args} = Keyword.pop(args, :file, name)
+    filename = do_string(filename)
 
     # amount of memory to use max before a flush is enforced
-    auto_save_memory = Keyword.get(args, :auto_save_memory, 1_000_000_000)
-    auto_save = Keyword.get(args, :auto_save, 180_000)
-    page_cache_memory = Keyword.get(args, :page_cache_memory, 1_000_000_000)
-    mode = Keyword.get(args, :access, :read_write)
+    {auto_save_memory, args} = Keyword.pop(args, :auto_save_memory, 1_000_000_000)
+    {auto_save, args} = Keyword.pop(args, :auto_save, 180_000)
+    {page_cache_memory, args} = Keyword.pop(args, :page_cache_memory, 1_000_000_000)
+    {mode, args} = Keyword.pop(args, :access, :read_write)
+    {keypos, args} = Keyword.pop(args, :keypos, 1)
+    {type, args} = Keyword.pop(args, :type, :set)
+    {compressed, args} = Keyword.pop(args, :compressed, false)
+
+    # unused options from dets:
+    # - ram_file
+    # - max_no_slots
+    # - min_no_slots
+    # - repair
+    args = Keyword.drop(args, [:ram_file, :max_no_slots, :min_no_slots, :repair])
+
+    for {key, _value} <- args do
+      raise ArgumentError, "Unknown option: #{key}"
+    end
 
     state =
       with true <- File.exists?(filename),
@@ -123,15 +140,6 @@ defmodule DetsPlus do
         load_state(filename, file_size, page_cache_memory)
       else
         _ ->
-          keypos = Keyword.get(args, :keypos, 1)
-          type = Keyword.get(args, :type, :set)
-
-          # unused options from dets:
-          # - ram_file
-          # - max_no_slots
-          # - min_no_slots
-          # - repair
-
           %State{
             version: @version,
             bloom: "",
@@ -154,13 +162,21 @@ defmodule DetsPlus do
       end
       |> init_hashfuns()
 
+    serializer =
+      case compressed do
+        true -> &:erlang.term_to_binary(&1, [:compressed])
+        false -> &:erlang.term_to_binary/1
+        0..9 -> fn term -> :erlang.term_to_binary(term, [:compressed, compressed]) end
+      end
+
     # These properties should override what is stored on disk
     state = %State{
       state
       | auto_save_memory: auto_save_memory,
         auto_save: auto_save,
         mode: mode,
-        page_cache_memory: page_cache_memory
+        page_cache_memory: page_cache_memory,
+        serializer: serializer
     }
 
     case GenServer.start_link(__MODULE__, state, hibernate_after: 5_000, name: name) do
@@ -214,6 +230,7 @@ defmodule DetsPlus do
     |> Map.put(:sync_fallback_memory, 0)
     |> Map.put(:auto_save_memory, nil)
     |> Map.put(:page_cache_memory, nil)
+    |> Map.put(:serializer, nil)
   end
 
   @wfile PagedFile
@@ -502,11 +519,23 @@ defmodule DetsPlus do
   def handle_call(
         :get_handle,
         _from,
-        state = %State{ets: ets, keyfun: keyfun, keyhashfun: keyhashfun, hashfun: hashfun}
+        state = %State{
+          ets: ets,
+          keyfun: keyfun,
+          keyhashfun: keyhashfun,
+          hashfun: hashfun,
+          serializer: serializer
+        }
       ) do
     {:reply,
-     %DetsPlus{pid: self(), ets: ets, keyfun: keyfun, keyhashfun: keyhashfun, hashfun: hashfun},
-     state}
+     %DetsPlus{
+       pid: self(),
+       ets: ets,
+       keyfun: keyfun,
+       keyhashfun: keyhashfun,
+       hashfun: hashfun,
+       serializer: serializer
+     }, state}
   end
 
   def handle_call(
@@ -788,8 +817,7 @@ defmodule DetsPlus do
            fp: fp,
            filename: filename,
            file_entries: file_entries,
-           keyhashfun: keyhashfun,
-           keyfun: keyfun
+           keyhashfun: keyhashfun
          }
        ) do
     # assumptions here
@@ -834,7 +862,7 @@ defmodule DetsPlus do
 
       # This starts of the file_reader sending entry data to above the future_* workers
       pids = [future_bloom.pid, future_entries.pid, future_state.pid]
-      async_iterate_produce(keyfun, new_dataset, old_file, pids)
+      async_iterate_produce(state, new_dataset, old_file, pids)
 
       state = Task.await(future_state, :infinity)
       {bloom, bloom_size} = Task.await(future_bloom, :infinity)
@@ -1097,7 +1125,7 @@ defmodule DetsPlus do
   @async_send_buffer_size 10_000_000
   @async_send_buffer_trigger div(10_000_000, 2)
   defp async_iterate_produce(
-         keyfun,
+         state,
          new_dataset,
          file_reader,
          targets
@@ -1106,7 +1134,7 @@ defmodule DetsPlus do
       init_acc = {[], 0, targets, -@async_send_buffer_trigger}
 
       {:done, {items, _item_count, _targets, _byte_count}} =
-        iterate(keyfun, {:cont, init_acc}, new_dataset, file_reader, &async_iterator/4)
+        iterate(state, {:cont, init_acc}, new_dataset, file_reader, &async_iterator/4)
 
       for pid <- targets do
         send(pid, {:entries, self(), Enum.reverse(items)})
@@ -1199,54 +1227,54 @@ defmodule DetsPlus do
   # this function takes a new_dataset and an old file and merges them, it calls
   # on every entry the callback `fun.(acc, entry_hash, entry_bin, entry_term)` and returns the final acc
   @doc false
-  def iterate(keyfun, {:cont, acc}, new_dataset, file_reader, fun) do
-    do_iterate(keyfun, {:cont, acc}, new_dataset, read_next_entry(file_reader), fun)
+  def iterate(state, {:cont, acc}, new_dataset, file_reader, fun) do
+    do_iterate(state, {:cont, acc}, new_dataset, read_next_entry(file_reader), fun)
   end
 
-  defp do_iterate(_keyfun, {:halt, acc}, _new_dataset, _old_dataset, _fun) do
+  defp do_iterate(_state, {:halt, acc}, _new_dataset, _old_dataset, _fun) do
     {:halted, acc}
   end
 
   # Nothing left
-  defp do_iterate(_keyfun, {:cont, acc}, [], nil, _fun) do
+  defp do_iterate(_state, {:cont, acc}, [], nil, _fun) do
     {:done, acc}
   end
 
   # Only old entries left
-  defp do_iterate(keyfun, {:cont, acc}, [], {fr, entry_hash, entry_bin}, fun) do
+  defp do_iterate(state, {:cont, acc}, [], {fr, entry_hash, entry_bin}, fun) do
     acc = fun.(acc, entry_hash, entry_bin, nil)
-    do_iterate(keyfun, acc, [], read_next_entry(fr), fun)
+    do_iterate(state, acc, [], read_next_entry(fr), fun)
   end
 
   # Only new entries left
-  defp do_iterate(keyfun, {:cont, acc}, new_dataset, nil, fun) do
+  defp do_iterate(state, {:cont, acc}, new_dataset, nil, fun) do
     {{entry_hash, _entry_key}, entry_term} = hd(new_dataset)
-    entry_bin = :erlang.term_to_binary(entry_term)
+    entry_bin = state.serializer.(entry_term)
     acc = fun.(acc, entry_hash, entry_bin, entry_term)
-    do_iterate(keyfun, acc, tl(new_dataset), nil, fun)
+    do_iterate(state, acc, tl(new_dataset), nil, fun)
   end
 
   # Both types are still there
-  defp do_iterate(keyfun, {:cont, acc}, new_dataset, {fr, old_entry_hash, old_entry_bin}, fun) do
+  defp do_iterate(state, {:cont, acc}, new_dataset, {fr, old_entry_hash, old_entry_bin}, fun) do
     # Reading a new entry from the top of the dataset
     {{new_entry_hash, new_entry_key}, new_entry_term} = hd(new_dataset)
 
     # Reading a new entry from the file or falling back to else if there is no next
     # entry in the file anymore
-    case compare(keyfun, {new_entry_hash, new_entry_key}, {old_entry_hash, old_entry_bin}) do
+    case compare(state.keyfun, {new_entry_hash, new_entry_key}, {old_entry_hash, old_entry_bin}) do
       :equal ->
-        entry_bin = :erlang.term_to_binary(new_entry_term)
+        entry_bin = state.serializer.(new_entry_term)
         acc = fun.(acc, new_entry_hash, entry_bin, new_entry_term)
-        do_iterate(keyfun, acc, tl(new_dataset), read_next_entry(fr), fun)
+        do_iterate(state, acc, tl(new_dataset), read_next_entry(fr), fun)
 
       :new ->
-        entry_bin = :erlang.term_to_binary(new_entry_term)
+        entry_bin = state.serializer.(new_entry_term)
         acc = fun.(acc, new_entry_hash, entry_bin, new_entry_term)
-        do_iterate(keyfun, acc, tl(new_dataset), {fr, old_entry_hash, old_entry_bin}, fun)
+        do_iterate(state, acc, tl(new_dataset), {fr, old_entry_hash, old_entry_bin}, fun)
 
       :old ->
         acc = fun.(acc, old_entry_hash, old_entry_bin, nil)
-        do_iterate(keyfun, acc, new_dataset, read_next_entry(fr), fun)
+        do_iterate(state, acc, new_dataset, read_next_entry(fr), fun)
     end
   end
 
@@ -1421,7 +1449,7 @@ defimpl Enumerable, for: DetsPlus do
   def member?(_pid, _key), do: {:error, __MODULE__}
   def slice(_pid), do: {:error, __MODULE__}
 
-  def reduce(%DetsPlus{pid: pid, ets: ets, keyhashfun: keyhashfun, keyfun: keyfun}, acc, fun) do
+  def reduce(state = %DetsPlus{pid: pid, ets: ets, keyhashfun: keyhashfun}, acc, fun) do
     new_data =
       :ets.tab2list(ets)
       |> Enum.reduce(%{}, fn {key, object}, map -> Map.put(map, key, object) end)
@@ -1444,10 +1472,10 @@ defimpl Enumerable, for: DetsPlus do
     new_dataset = DetsPlus.parallel_hash(keyhashfun, Map.to_list(new_data))
 
     ret =
-      DetsPlus.iterate(keyfun, acc, new_dataset, old_file, fn acc,
-                                                              _entry_hash,
-                                                              entry_blob,
-                                                              entry ->
+      DetsPlus.iterate(state, acc, new_dataset, old_file, fn acc,
+                                                             _entry_hash,
+                                                             entry_blob,
+                                                             entry ->
         if entry != :delete do
           fun.(entry || :erlang.binary_to_term(entry_blob), acc)
         else

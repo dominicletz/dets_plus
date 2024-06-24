@@ -120,7 +120,13 @@ defmodule DetsPlus.Bench do
   def large_write_test(module, test_size) do
     filename = filename(["large_write", module])
     rm(filename)
-    test_data = :rand.bytes(1024 * 1024 * 10)
+
+    test_data =
+      """
+        { "InsuranceCompanies": { "Top Insurance Companies":[ { "No": "1", "Name": "Berkshire Hathaway ( BRK.A)", "Market Capitalization": "$308 billion" } ], "source": "investopedia.com", "Time":"Feb 2019" } })
+      """
+      |> String.duplicate(52000)
+
     {:ok, dets} = open_file(module, filename)
 
     for x <- 0..test_size do
