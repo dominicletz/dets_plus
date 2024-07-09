@@ -77,6 +77,26 @@ defmodule DetsPlus.LRU.Test do
     assert DetsPlus.LRU.get(lru, "c") == nil
   end
 
+  test "file_size" do
+    size = 3
+
+    for i <- 1..5 do
+      dets = open_dets("test_file_size")
+      lru = DetsPlus.LRU.new(dets, size)
+
+      for x <- 1..50 do
+        for s <- 1..size do
+          DetsPlus.LRU.put(lru, "#{x}-#{s}-#{i}", "#{x}-#{s}")
+        end
+
+        DetsPlus.sync(dets)
+        assert Enum.count(dets) == size * 2 + 1
+      end
+
+      DetsPlus.close(dets)
+    end
+  end
+
   defp open_dets(name, args \\ []) do
     File.rm(name)
     {:ok, dets} = DetsPlus.open_file(String.to_atom(name), args)

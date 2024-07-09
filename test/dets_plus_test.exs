@@ -192,7 +192,54 @@ defmodule DetsPlus.Test do
       assert count_processes_by_module(PagedFile) == 0
     end
 
-    def count_processes_by_module(module) do
+    test "compression works" do
+      dets1 = open_dets("test_file10a", compressed: false)
+      dets2 = open_dets("test_file10b", compressed: true)
+
+      for x <- 1..1000 do
+        value = {x, String.duplicate("this should compress well", 24)}
+        DetsPlus.insert(dets1, value)
+        DetsPlus.insert(dets2, value)
+      end
+
+      DetsPlus.sync(dets1)
+      DetsPlus.sync(dets2)
+
+      assert DetsPlus.info(dets1)[:file_size] > DetsPlus.info(dets2)[:file_size] * 2
+    end
+
+    test "deletion works on file size" do
+      dets1 = open_dets("test_file11a", compressed: false)
+      dets2 = open_dets("test_file11b", compressed: true)
+
+      for x <- 1..1000 do
+        value = {x, String.duplicate("this should compress well", 24)}
+        DetsPlus.insert(dets1, value)
+        DetsPlus.insert(dets2, value)
+      end
+
+      DetsPlus.sync(dets1)
+      DetsPlus.sync(dets2)
+
+      before1 = DetsPlus.info(dets1)[:file_size]
+      before2 = DetsPlus.info(dets2)[:file_size]
+
+      for x <- 1..1000 do
+        DetsPlus.delete(dets1, x)
+        DetsPlus.delete(dets2, x)
+      end
+
+      DetsPlus.sync(dets1)
+      DetsPlus.sync(dets2)
+
+      after1 = DetsPlus.info(dets1)[:file_size]
+      after2 = DetsPlus.info(dets2)[:file_size]
+
+      assert before1 > after1
+      assert before2 > after2
+    end
+
+    defp count_processes_by_module(module) do
       Process.list()
       |> Enum.map(fn p -> Process.info(p)[:dictionary][:"$initial_call"] end)
       |> Enum.count(fn tuple -> is_tuple(tuple) and elem(tuple, 0) == module end)
