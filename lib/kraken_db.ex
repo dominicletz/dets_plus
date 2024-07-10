@@ -12,7 +12,7 @@ defmodule KrakenDB do
   end
 
   def open_directory(name, args \\ []) when is_list(args) do
-    directory = Keyword.get(args, :directory, name)
+    {directory, args} = Keyword.pop(args, :directory, name)
 
     File.mkdir_p(directory)
     meta = Path.join(directory, "meta")

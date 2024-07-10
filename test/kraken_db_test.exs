@@ -171,6 +171,10 @@ defmodule KrakenDB.Test do
       assert Enum.to_list(dets) == []
     end
 
+    test "directory arg" do
+      _dets = open_kraken("test_dir9", directory: "tmp/test_dir9")
+    end
+
     defp open_kraken(name, args \\ []) do
       name = "tmp/#{name}"
       File.rm_rf(name)
