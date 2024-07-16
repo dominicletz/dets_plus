@@ -112,7 +112,7 @@ defmodule DetsPlus do
   """
   def open_file(name, args \\ []) when is_atom(name) do
     case start_link([{:name, name} | args]) do
-      {:ok, pid} -> {:ok, GenServer.call(pid, :get_handle)}
+      {:ok, pid} -> {:ok, get_handle(pid)}
       err -> err
     end
   end
@@ -349,7 +349,7 @@ defmodule DetsPlus do
   """
   @spec delete_object(DetsPlus.t() | pid() | atom(), tuple() | map()) :: :ok | {:error, atom()}
   def delete_object(pid, object) when is_pid(pid) or is_atom(pid) do
-    delete_object(call(pid, :get_handle), object)
+    delete_object(get_handle(pid), object)
   end
 
   def delete_object(dets = %__MODULE__{keyfun: keyfun}, object) do
@@ -372,7 +372,7 @@ defmodule DetsPlus do
   @spec insert(DetsPlus.t() | pid() | atom(), tuple() | map() | [tuple() | map()]) ::
           :ok | {:error, atom()}
   def insert(pid, objects) when is_pid(pid) or is_atom(pid) do
-    insert(call(pid, :get_handle), objects)
+    insert(get_handle(pid), objects)
   end
 
   def insert(%__MODULE__{pid: pid, keyfun: keyfun}, objects) do
@@ -389,7 +389,7 @@ defmodule DetsPlus do
   @spec insert_new(DetsPlus.t() | pid() | atom(), tuple() | map() | [tuple() | map()]) ::
           true | false
   def insert_new(pid, object) when is_pid(pid) or is_atom(pid) do
-    insert_new(call(pid, :get_handle), object)
+    insert_new(get_handle(pid), object)
   end
 
   def insert_new(%__MODULE__{pid: pid, hashfun: hashfun, keyfun: keyfun}, object) do
@@ -407,7 +407,7 @@ defmodule DetsPlus do
   Returns the number of object in the table. This is an estimate and the same as `info(dets, :size)`.
   """
   @spec count(DetsPlus.t() | pid() | atom()) :: integer()
-  def count(pid) when is_pid(pid) or is_atom(pid), do: count(call(pid, :get_handle))
+  def count(pid) when is_pid(pid) or is_atom(pid), do: count(get_handle(pid))
 
   def count(dets = %__MODULE__{}) do
     info(dets, :size)
@@ -418,7 +418,7 @@ defmodule DetsPlus do
   """
   @spec reduce(DetsPlus.t() | pid() | atom(), any(), fun()) :: any()
   def reduce(pid, acc, fun) when is_pid(pid) or is_atom(pid),
-    do: reduce(call(pid, :get_handle), acc, fun)
+    do: reduce(get_handle(pid), acc, fun)
 
   def reduce(dets = %__MODULE__{}, acc, fun) do
     Enum.reduce(dets, acc, fun)
@@ -445,7 +445,7 @@ defmodule DetsPlus do
   Notice that the order of objects returned is unspecified. In particular, the order in which objects were inserted is not reflected.
   """
   @spec lookup(DetsPlus.t() | pid() | atom(), any) :: [tuple() | map()] | {:error, atom()}
-  def lookup(pid, key) when is_pid(pid) or is_atom(pid), do: lookup(call(pid, :get_handle), key)
+  def lookup(pid, key) when is_pid(pid) or is_atom(pid), do: lookup(get_handle(pid), key)
 
   def lookup(%__MODULE__{pid: pid, keyhashfun: keyhashfun}, key) do
     call(pid, {:lookup, key, keyhashfun.(key)})
@@ -547,9 +547,11 @@ defmodule DetsPlus do
   @doc """
   Returns the contents of the table as list. Same as calling `Enum.to_list()`
   """
-  def to_list(dets) do
-    Enum.to_list(dets)
-  end
+  def to_list(pid) when is_pid(pid) or is_atom(pid), do: to_list(get_handle(pid))
+  def to_list(dets), do: Enum.to_list(dets)
+
+  def get_handle(pid) when is_pid(pid) or is_atom(pid), do: call(pid, :get_handle)
+  def get_handle(dets), do: dets
 
   defp call(pid, cmd, timeout \\ :infinity) do
     GenServer.call(pid, cmd, timeout)
