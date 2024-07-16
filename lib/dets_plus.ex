@@ -96,21 +96,64 @@ defmodule DetsPlus do
   end
 
   @doc """
-    Opens an existing table or creates a new table. If no
-    `file` argument is provided the table name will be used.
-    Dets registers a Process under the provided name which can
-    be used for calling alternatively to the pid.
+  Opens an existing table or creates a new table. If no
+  `file` argument is provided the table name will be used.
+  Dets registers a Process under the provided name which can
+  be used for calling alternatively to the pid.
 
-    Arguments:
+  Arguments:
 
-    - `file` - An optional path + filename for the database file.
-    - `auto_save` - The autosave interval. If the interval is an integer Time, the table is flushed to disk whenever it is not accessed for Time milliseconds. If the interval is the atom infinity, autosave is disabled. Defaults to `180_000` (3 minutes).
-    - `auto_save_memory` - The autosave threshold in memory. When the internal ETS table reaches a size bigger than this the table is flushed to disk. Defaults to `1_000_000_000` (1 GB)
-    - `page_cache_memory` - The amount of memory to use for file system caching. Defaults to `1_000_000_000` (1 GB)
-    - `keypos` - The position of the element of each object to be used as key. Defaults to 1. The ability to explicitly state the key position is most convenient when we want to store Erlang records in which the first position of the record is the name of the record type.
-    - `compressed` - Indicates whether the terms stored on disk should be compressed. Possible values are [true, false, 0 - 9]. Defaults to `false`.
+  - `file` - An optional path + filename for the database file.
+  - `auto_save` - The autosave interval. If the interval is an integer Time, the table is flushed to disk whenever it is not accessed for Time milliseconds. If the interval is the atom infinity, autosave is disabled. Defaults to `180_000` (3 minutes).
+  - `auto_save_memory` - The autosave threshold in memory. When the internal ETS table reaches a size bigger than this the table is flushed to disk. Defaults to `1_000_000_000` (1 GB)
+  - `page_cache_memory` - The amount of memory to use for file system caching. Defaults to `1_000_000_000` (1 GB)
+  - `keypos` - The position of the element of each object to be used as key. Defaults to 1. The ability to explicitly state the key position is most convenient when we want to store Erlang records in which the first position of the record is the name of the record type.
+  - `compressed` - Indicates whether the terms stored on disk should be compressed. Possible values are [true, false, 0 - 9]. Defaults to `false`.
   """
   def open_file(name, args \\ []) when is_atom(name) do
+    case start_link([{:name, name} | args]) do
+      {:ok, pid} -> {:ok, GenServer.call(pid, :get_handle)}
+      err -> err
+    end
+  end
+
+  @doc """
+  Same as `open_file` but for embedding in a supervision tree.
+  Opens an existing table or creates a new table. If no
+  `file` argument is provided the table name will be used.
+  Dets registers a Process under the provided name which can
+  be used for calling alternatively to the pid.
+
+  Arguments:
+
+  - `name` - Registered name for the dets .
+  - `file` - An optional path + filename for the database file.
+  - `auto_save` - The autosave interval. If the interval is an integer Time, the table is flushed to disk whenever it is not accessed for Time milliseconds. If the interval is the atom infinity, autosave is disabled. Defaults to `180_000` (3 minutes).
+  - `auto_save_memory` - The autosave threshold in memory. When the internal ETS table reaches a size bigger than this the table is flushed to disk. Defaults to `1_000_000_000` (1 GB)
+  - `page_cache_memory` - The amount of memory to use for file system caching. Defaults to `1_000_000_000` (1 GB)
+  - `keypos` - The position of the element of each object to be used as key. Defaults to 1. The ability to explicitly state the key position is most convenient when we want to store Erlang records in which the first position of the record is the name of the record type.
+  - `compressed` - Indicates whether the terms stored on disk should be compressed. Possible values are [true, false, 0 - 9]. Defaults to `false`.
+
+  Example:
+
+  ```elixir
+  defmodule MyApp.Application do
+    use Application
+
+    def start(_type, _args) do
+      children = [
+        {DetsPlus, name: :example}
+      ]
+
+      opts = [strategy: :one_for_one, name: MyApp.Supervisor]
+      Supervisor.start_link(children, opts)
+    end
+  end
+  ```
+
+  """
+  def start_link(args) when is_list(args) do
+    {name, args} = Keyword.pop!(args, :name)
     {filename, args} = Keyword.pop(args, :file, name)
     filename = do_string(filename)
 
@@ -179,10 +222,7 @@ defmodule DetsPlus do
         serializer: serializer
     }
 
-    case GenServer.start_link(__MODULE__, state, hibernate_after: 5_000, name: name) do
-      {:ok, pid} -> {:ok, GenServer.call(pid, :get_handle)}
-      err -> err
-    end
+    GenServer.start_link(__MODULE__, state, hibernate_after: 5_000, name: name)
   end
 
   defp init_hashfuns(state = %State{keypos: keypos}) when is_integer(keypos) do
