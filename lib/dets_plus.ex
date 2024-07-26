@@ -260,7 +260,8 @@ defmodule DetsPlus do
       state
       | fp: fp,
         file_size: file_size,
-        header_size: byte_size(header)
+        header_size: byte_size(header),
+        filename: filename
     }
 
     {:ok, bloom} = PagedFile.pread(fp, bloom, header_offset - bloom)
