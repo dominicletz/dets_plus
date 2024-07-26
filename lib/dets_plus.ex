@@ -892,6 +892,7 @@ defmodule DetsPlus do
       # didn't make an impact.
       # (the only non-append workflow on this fp is the hash overflow handler, but that is usually small)
       opts = [page_size: 512_000, max_pages: 10, priority: :low]
+      Logger.info("Opening new file #{new_filename}")
       {:ok, new_file} = @wfile.open(new_filename, opts)
       state = %State{state | fp: new_file}
       stats = add_stats(stats, :fopen)
