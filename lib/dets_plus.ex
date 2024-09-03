@@ -449,7 +449,10 @@ defmodule DetsPlus do
   def lookup(pid, key) when is_pid(pid) or is_atom(pid), do: lookup(get_handle(pid), key)
 
   def lookup(%__MODULE__{pid: pid, keyhashfun: keyhashfun}, key) do
-    call(pid, {:lookup, key, keyhashfun.(key)})
+    case call(pid, {:lookup, key, keyhashfun.(key)}) do
+      {m, f, a} -> apply(m, f, a)
+      other -> other
+    end
   end
 
   @doc """
@@ -677,9 +680,7 @@ defmodule DetsPlus do
 
   def handle_call({:insert_new, objects}, from, state) do
     exists =
-      Enum.any?(objects, fn {key, hash, _object} ->
-        do_lookup(key, hash, state) != []
-      end)
+      Enum.any?(objects, fn {key, hash, _object} -> lookup(key, hash, state) != [] end)
 
     if exists do
       {:reply, false, state}
@@ -689,7 +690,7 @@ defmodule DetsPlus do
     end
   end
 
-  def handle_call({:lookup, key, hash}, _from, state) do
+  def handle_call({:lookup, key, hash}, _from, state = %State{}) do
     {:reply, do_lookup(key, hash, state), state}
   end
 
@@ -752,6 +753,13 @@ defmodule DetsPlus do
     {:noreply, %State{state | sync_waiters: [from | sync_waiters]}}
   end
 
+  defp lookup(key, hash, state) do
+    case do_lookup(key, hash, state) do
+      {m, f, a} -> apply(m, f, a)
+      other -> other
+    end
+  end
+
   defp do_lookup(key, hash, state = %State{ets: ets, sync_fallback: fallback}) do
     case Map.get(fallback, key) do
       :delete ->
@@ -759,7 +767,7 @@ defmodule DetsPlus do
 
       nil ->
         case :ets.lookup(ets, key) do
-          [] -> file_lookup(state, key, hash)
+          [] -> {__MODULE__, :file_lookup, [state, key, hash]}
           [{_key, :delete}] -> []
           [{_key, object}] -> [object]
         end
@@ -1353,9 +1361,9 @@ defmodule DetsPlus do
     Map.get(table_offsets, table_idx)
   end
 
-  defp file_lookup(%State{file_entries: 0}, _key, _hash), do: []
+  def file_lookup(%State{file_entries: 0}, _key, _hash), do: []
 
-  defp file_lookup(state = %State{slot_counts: slot_counts}, key, hash) do
+  def file_lookup(state = %State{slot_counts: slot_counts}, key, hash) do
     table_idx = table_idx(hash)
     slot_count = Map.get(slot_counts, table_idx, 0)
 

@@ -60,14 +60,12 @@ defmodule DetsPlus.HashLRU do
   def put(lru, key, value) do
     filter_fun = filter(lru)
 
-    cond do
-      not filter_fun.(value) ->
-        delete(lru, key)
-
-      true ->
-        n = :atomics.add_get(lru.size, 1, 1)
-        _put(lru, {:meta, n})
-        _put(lru, {hashkey(lru, key), {key, value}})
+    if filter_fun.(value) do
+      n = :atomics.add_get(lru.size, 1, 1)
+      _put(lru, {:meta, n})
+      _put(lru, {hashkey(lru, key), {key, value}})
+    else
+      delete(lru, key)
     end
 
     value
