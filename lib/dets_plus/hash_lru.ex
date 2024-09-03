@@ -42,7 +42,7 @@ defmodule DetsPlus.HashLRU do
   """
   def new(dets, max_size, filter \\ fn _ -> true end) when is_integer(max_size) do
     counter = :atomics.new(1, signed: false)
-    lru = %DetsPlus.LRU{dets: dets, size: counter, max_size: max_size, filter: filter}
+    lru = %DetsPlus.HashLRU{dets: dets, size: counter, max_size: max_size, filter: filter}
     size = _get(lru, :meta, 0)
     _put(lru, {:meta, size})
     :atomics.put(counter, 1, size)
