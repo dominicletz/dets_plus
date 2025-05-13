@@ -385,6 +385,25 @@ defmodule DetsPlus do
   end
 
   @doc """
+    Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be replaced.
+  """
+  @spec insert_async_if_not_busy(
+          DetsPlus.t() | pid() | atom(),
+          tuple() | map() | [tuple() | map()]
+        ) :: :ok
+  def insert_async_if_not_busy(pid, objects) when is_pid(pid) or is_atom(pid) do
+    insert_async_if_not_busy(get_handle(pid), objects)
+  end
+
+  def insert_async_if_not_busy(%__MODULE__{pid: pid, keyfun: keyfun}, objects) do
+    objects =
+      List.wrap(objects)
+      |> Enum.map(fn object -> {keyfun.(object), object} end)
+
+    GenServer.cast(pid, {:insert_async_if_not_busy, objects})
+  end
+
+  @doc """
   Inserts one or more objects into the table. If there already exists an object with a key matching the key of some of the given objects, the old object will be retained and false will be returned.
   """
   @spec insert_new(DetsPlus.t() | pid() | atom(), tuple() | map() | [tuple() | map()]) ::
@@ -778,6 +797,47 @@ defmodule DetsPlus do
   end
 
   @impl true
+  def handle_cast(
+        {:insert_async_if_not_busy, objects},
+        state = %State{
+          ets: ets,
+          ets_memory: ets_memory,
+          sync: sync,
+          sync_fallback: fallback,
+          sync_fallback_memory: fallback_memory,
+          auto_save_memory: auto_save_memory
+        }
+      ) do
+    if sync == nil do
+      :ets.insert(ets, objects)
+      ets_memory = ets_memory + estimate_size(objects)
+
+      sync =
+        sync ||
+          if ets_memory > auto_save_memory do
+            spawn_sync_worker(state)
+          end
+
+      state = %State{state | ets_memory: ets_memory, sync: sync}
+      {:noreply, state}
+    else
+      if fallback_memory > auto_save_memory do
+        # this pause exists to protect from out_of_memory situations when the writer can't
+        # finish in time
+        {:noreply, state}
+      else
+        fallback =
+          Enum.reduce(objects, fallback, fn {key, object}, fallback ->
+            Map.put(fallback, key, object)
+          end)
+
+        fallback_memory = fallback_memory + estimate_size(objects)
+        state = %State{state | sync_fallback: fallback, sync_fallback_memory: fallback_memory}
+        {:noreply, state}
+      end
+    end
+  end
+
   def handle_cast(
         {:sync_complete, sync_pid, new_filename, new_state = %State{}},
         %State{
@@ -1501,6 +1561,9 @@ defimpl Enumerable, for: DetsPlus do
   def slice(_pid), do: {:error, __MODULE__}
 
   def reduce(state = %DetsPlus{pid: pid, ets: ets, keyhashfun: keyhashfun}, acc, fun) do
+    # Calling to ensure all other async casts have been processed
+    DetsPlus.info(state)
+
     new_data =
       :ets.tab2list(ets)
       |> Enum.reduce(%{}, fn {key, object}, map -> Map.put(map, key, object) end)

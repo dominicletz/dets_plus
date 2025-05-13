@@ -70,9 +70,7 @@ defmodule DetsPlus.LRU do
           delete(lru, key)
         end
 
-        _put(lru, {:meta, n})
-        _put(lru, {{:key, key}, value, n})
-        _put(lru, {n, key})
+        _put(lru, [{:meta, n}, {{:key, key}, value, n}, {n, key}])
     end
 
     value
@@ -221,6 +219,6 @@ defmodule DetsPlus.LRU do
   end
 
   defp _put(lru, tuple) do
-    DetsPlus.insert(lru.dets, tuple)
+    DetsPlus.insert_async_if_not_busy(lru.dets, tuple)
   end
 end

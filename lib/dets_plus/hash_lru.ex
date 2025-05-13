@@ -62,8 +62,7 @@ defmodule DetsPlus.HashLRU do
 
     if filter_fun.(value) do
       n = :atomics.add_get(lru.size, 1, 1)
-      _put(lru, {:meta, n})
-      _put(lru, {hashkey(lru, key), {key, value}})
+      _put(lru, [{:meta, n}, {hashkey(lru, key), {key, value}}])
     else
       delete(lru, key)
     end
@@ -218,7 +217,7 @@ defmodule DetsPlus.HashLRU do
   end
 
   defp _put(lru, tuple) do
-    DetsPlus.insert(lru.dets, tuple)
+    DetsPlus.insert_async_if_not_busy(lru.dets, tuple)
   end
 
   defp hashkey(lru, key) do
