@@ -802,39 +802,43 @@ defmodule DetsPlus do
         state = %State{
           ets: ets,
           ets_memory: ets_memory,
-          sync: sync,
+          sync: nil,
+          auto_save_memory: auto_save_memory
+        }
+      ) do
+    :ets.insert(ets, objects)
+    ets_memory = ets_memory + estimate_size(objects)
+
+    sync =
+      if ets_memory > auto_save_memory do
+        spawn_sync_worker(state)
+      end
+
+    state = %State{state | ets_memory: ets_memory, sync: sync}
+    {:noreply, state}
+  end
+
+  def handle_cast(
+        {:insert_async_if_not_busy, objects},
+        state = %State{
           sync_fallback: fallback,
           sync_fallback_memory: fallback_memory,
           auto_save_memory: auto_save_memory
         }
       ) do
-    if sync == nil do
-      :ets.insert(ets, objects)
-      ets_memory = ets_memory + estimate_size(objects)
-
-      sync =
-        sync ||
-          if ets_memory > auto_save_memory do
-            spawn_sync_worker(state)
-          end
-
-      state = %State{state | ets_memory: ets_memory, sync: sync}
+    if fallback_memory > auto_save_memory do
+      # this pause exists to protect from out_of_memory situations when the writer can't
+      # finish in time
       {:noreply, state}
     else
-      if fallback_memory > auto_save_memory do
-        # this pause exists to protect from out_of_memory situations when the writer can't
-        # finish in time
-        {:noreply, state}
-      else
-        fallback =
-          Enum.reduce(objects, fallback, fn {key, object}, fallback ->
-            Map.put(fallback, key, object)
-          end)
+      fallback =
+        Enum.reduce(objects, fallback, fn {key, object}, fallback ->
+          Map.put(fallback, key, object)
+        end)
 
-        fallback_memory = fallback_memory + estimate_size(objects)
-        state = %State{state | sync_fallback: fallback, sync_fallback_memory: fallback_memory}
-        {:noreply, state}
-      end
+      fallback_memory = fallback_memory + estimate_size(objects)
+      state = %State{state | sync_fallback: fallback, sync_fallback_memory: fallback_memory}
+      {:noreply, state}
     end
   end
 
@@ -977,7 +981,7 @@ defmodule DetsPlus do
 
       state = Task.await(future_state, :infinity)
       {bloom, bloom_size} = Task.await(future_bloom, :infinity)
-      state = %State{state | bloom: bloom, bloom_size: bloom_size}
+      state = %{state | bloom: bloom, bloom_size: bloom_size}
 
       entries = Task.await(future_entries, :infinity)
 
